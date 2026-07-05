@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Broad root grant: safe here since we only ever create content:// URIs for
+         specific, known event files under our own app-private storage (which may be
+         on removable SD card, not just primary external storage). -->
+    <root-path name="root" path="." />
+</paths>

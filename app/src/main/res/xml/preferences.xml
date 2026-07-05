@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory app:title="Detection">
+        <SwitchPreferenceCompat app:key="detect_human" app:title="Detect humans" app:defaultValue="true" />
+        <SeekBarPreference app:key="conf_human" app:title="Human confidence %" app:defaultValue="60" app:min="10" android:max="95" app:showSeekBarValue="true" />
+        <SwitchPreferenceCompat app:key="detect_vehicle" app:title="Detect vehicles" app:defaultValue="true" />
+        <SeekBarPreference app:key="conf_vehicle" app:title="Vehicle confidence %" app:defaultValue="60" app:min="10" android:max="95" app:showSeekBarValue="true" />
+        <SwitchPreferenceCompat app:key="detect_animal" app:title="Detect animals" app:defaultValue="true" />
+        <SeekBarPreference app:key="conf_animal" app:title="Animal confidence %" app:defaultValue="60" app:min="10" android:max="95" app:showSeekBarValue="true" />
+        <SeekBarPreference app:key="consecutive_frames" app:title="Consecutive frames to confirm" app:defaultValue="2" app:min="1" android:max="10" app:showSeekBarValue="true" />
+        <SeekBarPreference app:key="cooldown_seconds" app:title="Cooldown between alerts (s)" app:defaultValue="60" app:min="5" android:max="600" app:showSeekBarValue="true" />
+        <ListPreference
+            app:key="camera_mount_rotation"
+            app:title="Camera mounting rotation"
+            app:summary="If the live preview or snapshots look sideways/upside-down, adjust this until they look correct"
+            app:entries="@array/rotation_entries"
+            app:entryValues="@array/rotation_values"
+            app:defaultValue="0" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="Recording">
+        <SeekBarPreference app:key="clip_seconds" app:title="Clip length (s)" app:defaultValue="15" app:min="5" android:max="60" app:showSeekBarValue="true" />
+        <SeekBarPreference app:key="max_clip_seconds" app:title="Max extended clip length (s)" app:defaultValue="60" app:min="10" android:max="180" app:showSeekBarValue="true" />
+        <ListPreference
+            app:key="storage_location"
+            app:title="Save to"
+            app:entries="@array/storage_entries"
+            app:entryValues="@array/storage_values"
+            app:defaultValue="sdcard" />
+        <SeekBarPreference app:key="retention_mb" app:title="Storage cap (MB)" app:defaultValue="2048" app:min="256" android:max="16384" app:showSeekBarValue="true" />
+        <SeekBarPreference app:key="retention_days" app:title="Auto-delete after (days, 0 = never)" app:defaultValue="30" app:min="0" android:max="90" app:showSeekBarValue="true" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="Email alerts">
+        <SwitchPreferenceCompat app:key="email_enabled" app:title="Enable email alerts" app:defaultValue="false" />
+        <EditTextPreference app:key="smtp_host" app:title="SMTP host" app:defaultValue="smtp.gmail.com" />
+        <EditTextPreference app:key="smtp_port" app:title="SMTP port" app:defaultValue="587" />
+        <EditTextPreference app:key="smtp_user" app:title="SMTP username / your Gmail address" />
+        <EditTextPreference app:key="smtp_password" app:title="SMTP app password" app:summary="Use a Gmail App Password, not your normal password" />
+        <EditTextPreference app:key="email_to" app:title="Send alerts to" />
+        <Preference app:key="test_email" app:title="Send test email" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="ntfy push alerts">
+        <SwitchPreferenceCompat app:key="ntfy_enabled" app:title="Enable ntfy alerts" app:defaultValue="false" />
+        <EditTextPreference app:key="ntfy_server" app:title="ntfy server" app:defaultValue="https://ntfy.sh" />
+        <EditTextPreference app:key="ntfy_topic" app:title="ntfy topic" app:summary="A private, hard-to-guess topic name; subscribe to it in the ntfy app" />
+        <Preference app:key="test_ntfy" app:title="Send test notification" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="Local web page">
+        <SwitchPreferenceCompat app:key="webserver_enabled" app:title="Enable web server on LAN" app:defaultValue="true" />
+        <EditTextPreference app:key="webserver_port" app:title="Port" app:defaultValue="8080" />
+        <EditTextPreference
+            app:key="remote_base_url"
+            app:title="Remote base URL (optional)"
+            app:summary="e.g. your Tailscale address: http://100.x.x.x:8080. Leave blank to use the LAN IP (only reachable from home WiFi). Used to build the event link included in alerts." />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="AI description (optional)">
+        <SwitchPreferenceCompat app:key="gemini_enabled" app:title="Describe detections with Gemini" app:defaultValue="false" />
+        <EditTextPreference app:key="gemini_api_key" app:title="Gemini API key" app:summary="Free key from Google AI Studio" />
+        <Preference app:key="test_gemini" app:title="Test Gemini description" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="General">
+        <SwitchPreferenceCompat app:key="start_on_boot" app:title="Start monitoring on boot" app:defaultValue="false" />
+        <Preference app:key="battery_optimization" app:title="Ignore battery optimization" app:summary="Recommended for reliable background operation" />
+    </PreferenceCategory>
+
+</PreferenceScreen>

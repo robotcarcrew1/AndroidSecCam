@@ -1,0 +1,140 @@
+# SecurityCam — Setup Guide
+
+Turns an old Android 9 phone (WiFi only, no SIM needed) into a security camera that
+detects humans, vehicles and animals, records a short clip to the SD card, and alerts
+you by email, ntfy push, and/or a local web page.
+
+The built APK is at:
+
+```
+app/build/outputs/apk/release/app-release.apk
+```
+
+## 1. Install the app on the phone
+
+Pick whichever is easiest:
+
+**A. USB + adb (fastest)**
+1. On the old phone: Settings → About phone → tap "Build number" 7 times to enable
+   Developer options, then Settings → Developer options → enable "USB debugging".
+2. Plug the phone into this computer via USB, accept the "Allow USB debugging?" prompt
+   on the phone.
+3. Run:
+   ```
+   ~/Android/Sdk/platform-tools/adb install -r app/build/outputs/apk/release/app-release.apk
+   ```
+
+**B. File copy (no cable needed)**
+1. Copy `app-release.apk` to the phone any way you like (email to yourself, Google Drive,
+   a USB stick with an OTG adapter, etc).
+2. On the phone, open the file with a file manager and tap install. You'll need to allow
+   "install unknown apps" for whichever app you used to open the file (Settings will
+   prompt you the first time).
+
+## 2. First launch
+
+1. Open **SecurityCam**. Grant the Camera permission (and notification permission if asked).
+2. Point the phone's camera where you want it to watch, mount/prop it securely, and
+   plug it into permanent power (this is meant to run 24/7).
+3. Tap the gear icon to open **Settings** before starting monitoring — set up at least
+   one alert method (see below), then go back and tap **Start monitoring**.
+4. Tap **Settings → Ignore battery optimization** and allow it — otherwise Android may
+   kill the app in the background after a while.
+5. **Check the live preview/web page orientation.** Depending on how the phone is
+   physically mounted, the image may appear rotated. If so, go to **Settings → Detection →
+   Camera mounting rotation** and try each option (0°/90°/180°/270°) until the preview
+   looks upright — this only needs to be set once per mounting position.
+
+## 3. Email alerts (Gmail SMTP + App Password)
+
+Gmail won't accept your normal password from an app. Create a 16-character "App Password":
+
+1. Go to https://myaccount.google.com/security and turn on **2-Step Verification** if it
+   isn't already on.
+2. Go to https://myaccount.google.com/apppasswords, enter a name like "SecurityCam", and
+   generate a password.
+3. In the app's Settings → Email alerts:
+   - Enable email alerts
+   - SMTP host: `smtp.gmail.com`, port `587` (already the default)
+   - SMTP username: your full Gmail address
+   - SMTP app password: the 16-character password from step 2 (not your normal password)
+   - Send alerts to: the email address you want alerts sent to (can be the same address)
+4. Tap **Send test email** to confirm it works.
+
+Using a non-Gmail SMTP provider works too — just fill in that provider's host/port/user/password.
+
+## 4. ntfy push notifications (optional, to your own phone)
+
+ntfy is a free, no-account push notification service.
+
+1. On your (main) phone, install the **ntfy** app from the Play Store or F-Droid.
+2. Pick a private topic name that's hard to guess, e.g. `securitycam-a1b2c3`. Anyone who
+   knows the topic name can see your notifications, so don't use something obvious.
+3. In the ntfy app, subscribe to that topic name (default server ntfy.sh is fine, or your
+   own self-hosted server if you have one).
+4. In SecurityCam Settings → ntfy push alerts: enable it, leave server as
+   `https://ntfy.sh` (or your own server URL), and enter the same topic name.
+5. Tap **Send test notification**.
+
+## 5. Local web page (LAN only)
+
+Enabled by default on port 8080. While the phone is on your WiFi, browse to:
+
+```
+http://<camera-phone's-LAN-IP>:8080
+```
+
+Find the phone's IP under Settings → WiFi → (tap the connected network) → IP address.
+The page shows monitoring status, a live-ish snapshot, and a scrollable list of recent
+events with thumbnails and clip downloads. There's no login — only use this on a trusted
+home network.
+
+## 6. Optional: AI description of detections (Gemini free tier)
+
+If enabled, each alert email/notification also includes a one-sentence AI description of
+the snapshot (e.g. "A person walking a dog on the driveway").
+
+1. Go to https://aistudio.google.com/apikey and create a free API key (no credit card
+   needed; Gemini's free tier is ~1,500 requests/day).
+2. In SecurityCam Settings → AI description: enable it and paste the key.
+3. Tap **Test Gemini description** to confirm it works.
+
+This is best-effort — if the phone has no internet or the free quota is exhausted, alerts
+still go out with the snapshot and detected object labels, just without the AI sentence.
+
+## 7. Tuning detection
+
+In Settings → Detection you can, per category (Human / Vehicle / Animal):
+- toggle it on/off
+- set the confidence threshold (higher = fewer false positives, but may miss real events)
+- set how many consecutive analyzed frames must show it before it counts as a real event
+  (helps ignore a single flickery misdetection)
+- set the cooldown between repeat alerts for the same category, so a person standing in
+  frame for 5 minutes doesn't spam you every few seconds
+
+Under Recording, you can set clip length, how far a continuing event can extend the clip,
+where to save (SD card recommended vs internal storage), and the total storage cap — the
+app deletes the oldest events automatically once the cap is hit.
+
+## 8. Start on boot
+
+Settings → General → "Start monitoring on boot" will auto-start monitoring after the
+phone reboots (e.g. after a power blip), so you don't have to walk over and tap Start again.
+
+## Notes / limitations
+
+- Video clips are saved without audio (no microphone permission requested).
+- Detection runs on-device using a TensorFlow Lite EfficientDet-Lite0 model (COCO classes),
+  so it works even with no internet — only the email/ntfy/Gemini alerts need connectivity.
+- **Still-frame "burst" mode on older camera hardware**: some phones (confirmed on a
+  Xiaomi Mi A1) report their camera as "LEGACY" level, which can't reliably run continuous
+  video recording at the same time as live detection — the video encoder starves and the
+  clip aborts after ~1 second. The app detects this automatically and falls back to saving
+  one JPEG frame per second for the event duration instead of `clip.mp4` (still saved to
+  the same per-event folder on the SD card, as `frame_000.jpg`, `frame_001.jpg`, ...). The
+  web page and event list show "no video (camera limitation)" for these events. This is a
+  hardware limitation, not something adjustable in settings.
+- If you see this fallback and want a real video file instead, the SD-card frames can be
+  combined into an mp4 afterward on a computer with ffmpeg
+  (`ffmpeg -framerate 1 -i frame_%03d.jpg -pix_fmt yuv420p clip.mp4`), though this isn't
+  done automatically by the app.

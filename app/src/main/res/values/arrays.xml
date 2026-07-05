@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="storage_entries">
+        <item>SD card (removable storage)</item>
+        <item>Internal storage</item>
+    </string-array>
+    <string-array name="storage_values">
+        <item>sdcard</item>
+        <item>internal</item>
+    </string-array>
+    <string-array name="rotation_entries">
+        <item>Normal (0°)</item>
+        <item>Rotated 90° clockwise</item>
+        <item>Upside down (180°)</item>
+        <item>Rotated 270° clockwise</item>
+    </string-array>
+    <string-array name="rotation_values">
+        <item>0</item>
+        <item>90</item>
+        <item>180</item>
+        <item>270</item>
+    </string-array>
+</resources>
