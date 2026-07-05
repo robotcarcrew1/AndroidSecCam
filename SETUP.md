@@ -89,7 +89,37 @@ The page shows monitoring status, a live-ish snapshot, and a scrollable list of 
 events with thumbnails and clip downloads. There's no login — only use this on a trusted
 home network.
 
-## 6. Optional: AI description of detections (Gemini free tier)
+## 6. Remote access away from home WiFi (Tailscale, optional)
+
+> **Note: this feature has not actually been tested yet** — the app-side plumbing (the
+> "Remote base URL" setting and the links it builds into alerts) has been verified to
+> work correctly with the LAN IP, but installing/configuring Tailscale itself and
+> confirming the camera device is reachable through it hasn't been tried. Treat the
+> steps below as a starting point, not a guarantee.
+
+The local web page above only works while your other phone is on the **same home WiFi**
+as the camera. [Tailscale](https://tailscale.com) is a free VPN app that creates a
+private, encrypted network between just your own devices — no port forwarding, no public
+exposure — so you can reach the camera's web page (and the "View event" links in alerts)
+from anywhere with internet, not just at home.
+
+1. Install the **Tailscale** app on the camera device *and* on the phone you want to view
+   it from (Play Store, or sideload the APK the same way you installed SecurityCam).
+2. Sign in with the same account on both (any Google/Microsoft/GitHub account works —
+   Tailscale is free for personal use, up to 100 devices).
+3. On the camera device, open the Tailscale app and note its Tailscale IP address (looks
+   like `100.x.x.x`).
+4. In SecurityCam, go to **Settings → Local web page → Remote base URL** and enter
+   `http://<that-tailscale-ip>:8080` (using the same port as "Local web page" above).
+5. From your other phone (with Tailscale running), try browsing to that same address —
+   it should load the camera's status page even when you're both off the home WiFi.
+
+Once set up, alert emails/ntfy notifications will include a "View event" link using this
+address instead of the LAN-only IP, so it works from wherever you are. Leave the field
+blank to keep using the LAN IP only (fine if you're always going to be on the same WiFi
+when checking alerts).
+
+## 7. Optional: AI description of detections (Gemini free tier)
 
 If enabled, each alert email/notification also includes a one-sentence AI description of
 the snapshot (e.g. "A person walking a dog on the driveway").
@@ -102,7 +132,7 @@ the snapshot (e.g. "A person walking a dog on the driveway").
 This is best-effort — if the phone has no internet or the free quota is exhausted, alerts
 still go out with the snapshot and detected object labels, just without the AI sentence.
 
-## 7. Tuning detection
+## 8. Tuning detection
 
 In Settings → Detection you can, per category (Human / Vehicle / Animal):
 - toggle it on/off
@@ -125,12 +155,12 @@ Under Recording, you can set clip length, how far a continuing event can extend 
 where to save (SD card recommended vs internal storage), and the total storage cap — the
 app deletes the oldest events automatically once the cap is hit.
 
-## 8. Start on boot
+## 9. Start on boot
 
 Settings → General → "Start monitoring on boot" will auto-start monitoring after the
 phone reboots (e.g. after a power blip), so you don't have to walk over and tap Start again.
 
-## 9. Status and battery alerts
+## 10. Status and battery alerts
 
 Under Settings → "Status & battery alerts":
 
@@ -143,13 +173,13 @@ Under Settings → "Status & battery alerts":
   the battery keeps dropping (won't repeat at the same level) and reset once it's
   charging again.
 
-## 10. Camera name (multiple cameras)
+## 11. Camera name (multiple cameras)
 
 If you run more than one camera phone, set a unique **Camera name** at the top of
 Settings — it's included in every email/ntfy subject line and shown on the web page and
 foreground notification, so you can tell which camera an alert came from.
 
-## 11. Monitoring schedule
+## 12. Monitoring schedule
 
 Settings → **Monitoring schedule** (opens its own screen) lets you automatically start
 and stop monitoring at specific times, independently for each day of the week:
