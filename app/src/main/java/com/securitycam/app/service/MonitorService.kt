@@ -20,6 +20,7 @@ import android.os.BatteryManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -132,6 +133,12 @@ class MonitorService : LifecycleService() {
     private var burstFrameIndex = 0
     private var burstJob: Job? = null
 
+    /** Held for as long as monitoring is armed, so the CPU keeps running the camera/
+     *  detection pipeline with the screen off — foreground services generally survive
+     *  screen-off on their own, but some OEM power management (Samsung/Xiaomi) is more
+     *  aggressive, and this is the standard extra guarantee for a 24/7 background task. */
+    private var wakeLock: PowerManager.WakeLock? = null
+
     private var batteryReceiver: BroadcastReceiver? = null
     /** Tracks the lowest level we've already alerted at, so we escalate as it keeps
      *  dropping (e.g. 20% -> 15% -> 10%) instead of spamming on every broadcast, and
@@ -235,6 +242,7 @@ class MonitorService : LifecycleService() {
             this, NOTIF_ID_MONITOR, notification,
             ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
         )
+        acquireWakeLock()
         _isArmed.value = true
         bindCamera()
         sendStartAlert()
@@ -251,8 +259,23 @@ class MonitorService : LifecycleService() {
             activeRecording = null
         }
         cameraProvider?.unbindAll()
+        releaseWakeLock()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SecurityCam:MonitorWakeLock").apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
     }
 
     private fun sendStartAlert() {
@@ -727,6 +750,7 @@ class MonitorService : LifecycleService() {
         if (::detector.isInitialized) detector.close()
         webServer?.stop()
         batteryReceiver?.let { runCatching { unregisterReceiver(it) } }
+        releaseWakeLock()
         super.onDestroy()
     }
 
