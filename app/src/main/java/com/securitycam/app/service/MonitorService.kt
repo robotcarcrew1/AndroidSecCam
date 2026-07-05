@@ -652,36 +652,48 @@ class MonitorService : LifecycleService() {
             .joinToString(", ") { "${it.label} (${(it.score * 100).toInt()}%)" }
 
         serviceScope.launch {
-            var description: String? = null
-            if (prefs.geminiEnabled) {
-                geminiDescriber.describe(
-                    event.snapshotFile,
-                    "In one short sentence, describe what a security camera detected in this image (e.g. person, vehicle, animal, activity)."
-                ).onSuccess { description = it }
-                    .onFailure { Log.w(TAG, "Gemini description failed: ${it.message}") }
-            }
+            // Send a private copy of the snapshot, not the live snapshot.jpg: the analyzer
+            // rewrites that file mid-event whenever a better frame arrives, and a rewrite
+            // during the upload aborts the send (observed as OkHttp "expected N bytes but
+            // received M" — the Vehicle/Animal alerts were silently lost that way).
+            val attachment = runCatching {
+                File(cacheDir, "alert_${event.id}_${System.nanoTime()}.jpg")
+                    .apply { writeBytes(event.snapshotFile.readBytes()) }
+            }.getOrElse { event.snapshotFile }
+            try {
+                var description: String? = null
+                if (prefs.geminiEnabled) {
+                    geminiDescriber.describe(
+                        attachment,
+                        "In one short sentence, describe what a security camera detected in this image (e.g. person, vehicle, animal, activity)."
+                    ).onSuccess { description = it }
+                        .onFailure { Log.w(TAG, "Gemini description failed: ${it.message}") }
+                }
 
-            val subject = "${cameraLabel()}: $groupNames detected"
-            val bodyBuilder = StringBuilder()
-                .append("Detected: $groupNames\n")
-                .append("Time: $timeStr\n")
-                .append("Objects: $labelsStr\n")
-            if (description != null) bodyBuilder.append("\nAI description: $description\n")
-            eventLink(event)?.let { bodyBuilder.append("\nView event: $it\n") }
-            val body = bodyBuilder.toString()
+                val subject = "${cameraLabel()}: $groupNames detected"
+                val bodyBuilder = StringBuilder()
+                    .append("Detected: $groupNames\n")
+                    .append("Time: $timeStr\n")
+                    .append("Objects: $labelsStr\n")
+                if (description != null) bodyBuilder.append("\nAI description: $description\n")
+                eventLink(event)?.let { bodyBuilder.append("\nView event: $it\n") }
+                val body = bodyBuilder.toString()
 
-            if (prefs.emailEnabled) {
-                emailAlerter.sendDetection(subject, body, event.snapshotFile)
-                    .onFailure { Log.w(TAG, "Email alert failed: ${it.message}") }
-            }
-            if (prefs.ntfyEnabled) {
-                ntfyAlerter.sendDetection(subject, body, event.snapshotFile)
-                    .onFailure { Log.w(TAG, "ntfy alert failed: ${it.message}") }
-            }
+                if (prefs.emailEnabled) {
+                    emailAlerter.sendDetection(subject, body, attachment)
+                        .onFailure { Log.w(TAG, "Email alert failed: ${it.message}") }
+                }
+                if (prefs.ntfyEnabled) {
+                    ntfyAlerter.sendDetection(subject, body, attachment)
+                        .onFailure { Log.w(TAG, "ntfy alert failed: ${it.message}") }
+                }
 
-            val finalDescription = description
-            if (finalDescription != null) {
-                eventStore.updateDescription(event, finalDescription)
+                val finalDescription = description
+                if (finalDescription != null) {
+                    eventStore.updateDescription(event, finalDescription)
+                }
+            } finally {
+                if (attachment != event.snapshotFile) attachment.delete()
             }
         }
     }

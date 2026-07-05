@@ -46,9 +46,14 @@ class EventStore(private val context: Context) {
     }
 
     fun saveSnapshot(event: EventRecord, bitmap: Bitmap) {
-        FileOutputStream(event.snapshotFile).use { out ->
+        // Write to a temp file and rename into place: the snapshot is re-saved mid-event
+        // whenever a better frame arrives, and concurrent readers (alert attachment
+        // upload, web server) must never see a partially written file.
+        val tmp = File(event.dir, "snapshot.jpg.tmp")
+        FileOutputStream(tmp).use { out ->
             bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
         }
+        if (!tmp.renameTo(event.snapshotFile)) tmp.delete()
     }
 
     fun saveMeta(
