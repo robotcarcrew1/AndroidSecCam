@@ -19,9 +19,14 @@ cloud service, no subscription, no SIM card needed.
 
 ## Requirements
 
-- An Android phone/tablet running Android 9 (API 28) or newer, with a working camera
+- An Android phone/tablet running Android 8.0 (API 26) or newer, with a working camera
   and WiFi.
 - No SIM card or cellular plan needed.
+- Whether you get real video clips or a still-frame burst per event depends on what the
+  device's camera hardware supports — the app detects this automatically at runtime (see
+  [SETUP.md](SETUP.md)). Confirmed working: real video on a Samsung Galaxy Tab A (2016,
+  Android 8.1); still-frame burst fallback on a Xiaomi Mi A1 (Android 9, LEGACY-level
+  camera hardware).
 
 ## Building
 

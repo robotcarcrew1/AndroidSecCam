@@ -1,8 +1,8 @@
 # SecurityCam — Setup Guide
 
-Turns an old Android 9 phone (WiFi only, no SIM needed) into a security camera that
-detects humans, vehicles and animals, records a short clip to the SD card, and alerts
-you by email, ntfy push, and/or a local web page.
+Turns an old Android phone or tablet (WiFi only, no SIM needed; Android 8.0+) into a
+security camera that detects humans, vehicles and animals, records a short clip to the
+SD card, and alerts you by email, ntfy push, and/or a local web page.
 
 The built APK is at:
 
@@ -178,3 +178,10 @@ will still work (just possibly a few minutes less precise) without it.
   combined into an mp4 afterward on a computer with ffmpeg
   (`ffmpeg -framerate 1 -i frame_%03d.jpg -pix_fmt yuv420p clip.mp4`), though this isn't
   done automatically by the app.
+- **Confirmed device compatibility**: real video recording works on a Samsung Galaxy
+  Tab A (2016, Android 8.1, `SM-T580`) — full 1080p30 clips with no issues. The
+  still-frame burst fallback (above) was needed on a Xiaomi Mi A1 (Android 9). Whether
+  you get one or the other depends entirely on the specific device's camera hardware,
+  not the Android version — there's no way to know in advance without testing.
+- Minimum supported Android version is 8.0 (API 26), since that's when notification
+  channels (which the foreground "monitoring" notification requires) were introduced.
