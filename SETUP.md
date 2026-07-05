@@ -36,8 +36,10 @@ Pick whichever is easiest:
 1. Open **SecurityCam**. Grant the Camera permission (and notification permission if asked).
 2. Point the phone's camera where you want it to watch, mount/prop it securely, and
    plug it into permanent power (this is meant to run 24/7).
-3. Tap the gear icon to open **Settings** before starting monitoring — set up at least
-   one alert method (see below), then go back and tap **Start monitoring**.
+3. Tap the gear icon to open **Settings** before starting monitoring — ideally set up
+   at least one alert method (see below) so you hear about detections, then go back and
+   tap **Start monitoring**. All alert methods (email/ntfy/web page) are optional and
+   can be enabled in any combination; detection and recording work without them.
 4. Tap **Settings → Ignore battery optimization** and allow it — otherwise Android may
    kill the app in the background after a while.
 5. **Check the live preview/web page orientation.** Depending on how the phone is
@@ -45,7 +47,7 @@ Pick whichever is easiest:
    Camera mounting rotation** and try each option (0°/90°/180°/270°) until the preview
    looks upright — this only needs to be set once per mounting position.
 
-## 3. Email alerts (Gmail SMTP + App Password)
+## 3. Email alerts (optional, Gmail SMTP + App Password)
 
 Gmail won't accept your normal password from an app. Create a 16-character "App Password":
 
@@ -132,7 +134,10 @@ If enabled, each alert email/notification also includes a one-sentence AI descri
 the snapshot (e.g. "A person walking a dog on the driveway").
 
 1. Go to https://aistudio.google.com/apikey and create a free API key (no credit card
-   needed; Gemini's free tier is ~1,500 requests/day).
+   needed). Note the free-tier quota is small — as of mid-2026 it allows only about
+   **20 requests/day** for the model the app uses (confirmed live via the API's own
+   quota error), so on a busy camera many alerts will simply go out without the AI
+   sentence once the daily quota is used up.
 2. In SecurityCam Settings → AI description: enable it and paste the key.
 3. Tap **Test Gemini description** to confirm it works.
 
@@ -159,8 +164,9 @@ In Settings → Detection you can, per category (Human / Vehicle / Animal):
   same physical object is still sitting in the same place.
 
 Under Recording, you can set clip length, how far a continuing event can extend the clip,
-where to save (SD card recommended vs internal storage), and the total storage cap — the
-app deletes the oldest events automatically once the cap is hit.
+where to save (SD card recommended vs internal storage — if no SD card is inserted, the
+"SD card" setting silently falls back to internal storage), and the total storage cap —
+the app deletes the oldest events automatically once the cap is hit.
 
 ## 9. Start on boot
 

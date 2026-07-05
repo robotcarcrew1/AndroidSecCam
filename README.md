@@ -11,7 +11,9 @@ cloud service, no subscription, no SIM card needed.
   automatically to a still-frame burst on older camera hardware that can't record video
   and run live detection at the same time.
 - **Alerts** via email (SMTP), [ntfy](https://ntfy.sh) push notifications, and a built-in
-  local web page — each independent, so one failing doesn't block the others.
+  local web page — all optional and each independent, so you can enable any combination
+  (or none) and one failing doesn't block the others. Detection and recording work fine
+  without any alert method configured.
 - **Optional AI descriptions** of detections using the Google Gemini free tier.
 - **Configurable**: per-category detection toggles and confidence thresholds, clip
   length, storage cap and age-based auto-delete, camera mounting-rotation correction,
