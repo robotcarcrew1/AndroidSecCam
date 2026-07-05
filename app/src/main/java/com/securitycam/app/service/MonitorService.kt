@@ -109,6 +109,13 @@ class MonitorService : LifecycleService() {
     private var currentEvent: EventRecord? = null
     private val currentEventGroups = mutableSetOf<DetectionGroup>()
     private val alertedGroupsThisEvent = mutableSetOf<DetectionGroup>()
+    /** Remembers where (and when) the last alert-worthy detection was seen per group —
+     *  tracked independently of events/recordings (which reset far more often), so a
+     *  stationary object (e.g. a parked car) doesn't re-alert every time one clip ends
+     *  and the next begins, while a genuinely new object in a different spot still
+     *  alerts immediately. See [dispatchAlerts]. */
+    private data class AlertMemory(val timestampMs: Long, val box: Detection)
+    private val lastAlert = mutableMapOf<DetectionGroup, AlertMemory>()
     /** Highest single-detection confidence seen so far this event — the snapshot is
      *  replaced whenever a frame beats it, so the thumbnail/snapshot shows the clearest
      *  moment of the event rather than just whichever frame first triggered it. */
@@ -578,9 +585,42 @@ class MonitorService : LifecycleService() {
 
     private fun dispatchAlerts(event: EventRecord, groups: Set<DetectionGroup>, filtered: List<Detection>) {
         alertedGroupsThisEvent.addAll(groups)
+        refreshRecentEvents()
+        val notification = buildNotification(getString(R.string.status_monitoring))
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIF_ID_MONITOR, notification)
+
+        // Recordings/snapshots always happen regardless (handled by the caller) — this
+        // gate only throttles the email/ntfy alert itself, independently of the
+        // recording cooldown. A group only gets suppressed if the *same physical object*
+        // (same position, via bounding-box overlap) is still the one being seen — a
+        // different object of the same category (e.g. a different car pulling in) always
+        // alerts immediately regardless of the repeat window.
+        val now = System.currentTimeMillis()
+        val repeatMs = prefs.alertRepeatMs
+        val dueGroups = groups.filter { g ->
+            val candidate = filtered.filter { it.group == g }.maxByOrNull { it.score }
+            val memory = lastAlert[g]
+            val sameObjectStillThere = candidate != null && memory != null &&
+                candidate.boxOverlap(memory.box) >= SAME_OBJECT_IOU_THRESHOLD
+            if (!sameObjectStillThere) {
+                true
+            } else {
+                repeatMs <= 0 || now - memory!!.timestampMs >= repeatMs
+            }
+        }.toSet()
+        if (dueGroups.isEmpty()) {
+            Log.i(TAG, "Suppressing repeat alert for $groups (same object, within alert-repeat window)")
+            return
+        }
+        dueGroups.forEach { g ->
+            filtered.filter { it.group == g }.maxByOrNull { it.score }?.let { best ->
+                lastAlert[g] = AlertMemory(now, best)
+            }
+        }
+
         val timeStr = timeFormat.format(Date(event.timestampMs))
-        val groupNames = groups.joinToString(", ") { it.name.lowercase().replaceFirstChar(Char::uppercase) }
-        val labelsStr = filtered.filter { it.group in groups }
+        val groupNames = dueGroups.joinToString(", ") { it.name.lowercase().replaceFirstChar(Char::uppercase) }
+        val labelsStr = filtered.filter { it.group in dueGroups }
             .joinToString(", ") { "${it.label} (${(it.score * 100).toInt()}%)" }
 
         serviceScope.launch {
@@ -616,10 +656,6 @@ class MonitorService : LifecycleService() {
                 eventStore.updateDescription(event, finalDescription)
             }
         }
-
-        refreshRecentEvents()
-        val notification = buildNotification(getString(R.string.status_monitoring))
-        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIF_ID_MONITOR, notification)
     }
 
     private fun drawBoxes(source: Bitmap, detections: List<Detection>): Bitmap {
@@ -702,6 +738,7 @@ class MonitorService : LifecycleService() {
         const val NOTIF_ID_MONITOR = 1
         private const val ANALYSIS_INTERVAL_MS = 350L
         private const val BURST_INTERVAL_MS = 1000L
+        private const val SAME_OBJECT_IOU_THRESHOLD = 0.5f
 
         fun startIntent(context: Context) = Intent(context, MonitorService::class.java)
         fun stopIntent(context: Context) = Intent(context, MonitorService::class.java).setAction(ACTION_STOP)

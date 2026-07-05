@@ -20,6 +20,7 @@ class Prefs(context: Context) {
         const val KEY_CONF_ANIMAL = "conf_animal"
         const val KEY_CONSECUTIVE_FRAMES = "consecutive_frames"
         const val KEY_COOLDOWN_SECONDS = "cooldown_seconds"
+        const val KEY_ALERT_REPEAT_MINUTES = "alert_repeat_minutes"
         const val KEY_CLIP_SECONDS = "clip_seconds"
         const val KEY_MAX_CLIP_SECONDS = "max_clip_seconds"
         const val KEY_STORAGE_LOCATION = "storage_location" // "sdcard" or "internal"
@@ -70,7 +71,14 @@ class Prefs(context: Context) {
     } / 100f
 
     val consecutiveFrames: Int get() = sp.getInt(KEY_CONSECUTIVE_FRAMES, 2)
+    /** Governs how often a *new recording* can start for the same category — short by
+     *  design, so a lingering object (e.g. a parked car) still gets periodic fresh clips. */
     val cooldownMs: Long get() = sp.getInt(KEY_COOLDOWN_SECONDS, 60) * 1000L
+    /** Governs how often an *email/ntfy alert* can repeat for the same category, tracked
+     *  independently of recordings — this is what actually stops a lingering object from
+     *  spamming you, since it isn't reset when one clip ends and the next one starts.
+     *  0 means "no suppression, alert every time" (the old behavior). */
+    val alertRepeatMs: Long get() = sp.getInt(KEY_ALERT_REPEAT_MINUTES, 15) * 60_000L
     val clipSeconds: Int get() = sp.getInt(KEY_CLIP_SECONDS, 15)
     val maxClipSeconds: Int get() = sp.getInt(KEY_MAX_CLIP_SECONDS, 60)
     val useSdCard: Boolean get() = sp.getString(KEY_STORAGE_LOCATION, "sdcard") == "sdcard"

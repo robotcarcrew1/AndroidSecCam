@@ -109,8 +109,17 @@ In Settings → Detection you can, per category (Human / Vehicle / Animal):
 - set the confidence threshold (higher = fewer false positives, but may miss real events)
 - set how many consecutive analyzed frames must show it before it counts as a real event
   (helps ignore a single flickery misdetection)
-- set the cooldown between repeat alerts for the same category, so a person standing in
-  frame for 5 minutes doesn't spam you every few seconds
+- set the **cooldown between recordings**: how often a fresh clip/snapshot can start for
+  the same category. Kept fairly short by design, so a lingering object still gets
+  periodic fresh footage.
+- set the **minimum time between repeat alerts**: this is what actually stops something
+  that sticks around a long time (e.g. a car parked in view for hours) from spamming your
+  email/ntfy — recordings keep happening as normal, but the alert itself won't repeat
+  until this much time has passed. It's smarter than a plain timer, though: the app
+  compares the position of the new detection against the one that triggered the last
+  alert, so if a *different* car pulls in a few minutes later in a different spot, you
+  still get notified immediately — the throttling only kicks in when it looks like the
+  same physical object is still sitting in the same place.
 
 Under Recording, you can set clip length, how far a continuing event can extend the clip,
 where to save (SD card recommended vs internal storage), and the total storage cap — the

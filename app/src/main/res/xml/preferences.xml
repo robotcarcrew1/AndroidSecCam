@@ -17,7 +17,16 @@
         <SwitchPreferenceCompat app:key="detect_animal" app:title="Detect animals" app:defaultValue="true" />
         <SeekBarPreference app:key="conf_animal" app:title="Animal confidence %" app:defaultValue="60" app:min="10" android:max="95" app:showSeekBarValue="true" />
         <SeekBarPreference app:key="consecutive_frames" app:title="Consecutive frames to confirm" app:defaultValue="2" app:min="1" android:max="10" app:showSeekBarValue="true" />
-        <SeekBarPreference app:key="cooldown_seconds" app:title="Cooldown between alerts (s)" app:defaultValue="60" app:min="5" android:max="600" app:showSeekBarValue="true" />
+        <SeekBarPreference
+            app:key="cooldown_seconds"
+            app:title="Cooldown between recordings (s)"
+            app:summary="How often a new clip/snapshot can start for the same category. Short by design — see &quot;Minimum time between repeat alerts&quot; below to stop a lingering object (e.g. a parked car) from spamming your email/ntfy."
+            app:defaultValue="60" app:min="5" android:max="600" app:showSeekBarValue="true" />
+        <SeekBarPreference
+            app:key="alert_repeat_minutes"
+            app:title="Minimum time between repeat alerts (min)"
+            app:summary="If the same category (e.g. a parked car) is still there, don't send another email/ntfy alert until this much time has passed. Recordings/snapshots still happen as normal — only the alert is throttled. 0 = alert every time."
+            app:defaultValue="15" app:min="0" android:max="180" app:showSeekBarValue="true" />
         <ListPreference
             app:key="camera_mount_rotation"
             app:title="Camera mounting rotation"
