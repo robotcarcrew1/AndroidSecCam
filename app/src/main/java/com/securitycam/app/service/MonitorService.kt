@@ -4,8 +4,10 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -14,6 +16,7 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.os.BatteryManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -106,6 +109,10 @@ class MonitorService : LifecycleService() {
     private var currentEvent: EventRecord? = null
     private val currentEventGroups = mutableSetOf<DetectionGroup>()
     private val alertedGroupsThisEvent = mutableSetOf<DetectionGroup>()
+    /** Highest single-detection confidence seen so far this event — the snapshot is
+     *  replaced whenever a frame beats it, so the thumbnail/snapshot shows the clearest
+     *  moment of the event rather than just whichever frame first triggered it. */
+    private var bestSnapshotScore = 0f
     private var recordingStartMs = 0L
     private var stopJob: Job? = null
     private var webServer: com.securitycam.app.web.WebServer? = null
@@ -117,6 +124,12 @@ class MonitorService : LifecycleService() {
     private var burstMode = false
     private var burstFrameIndex = 0
     private var burstJob: Job? = null
+
+    private var batteryReceiver: BroadcastReceiver? = null
+    /** Tracks the lowest level we've already alerted at, so we escalate as it keeps
+     *  dropping (e.g. 20% -> 15% -> 10%) instead of spamming on every broadcast, and
+     *  reset once it's charging or back above the threshold. */
+    private var lastBatteryAlertPercent = 100
 
     @Volatile private var latestFrameJpeg: ByteArray? = null
 
@@ -147,6 +160,7 @@ class MonitorService : LifecycleService() {
             isLegacyCamera = detectLegacyHardware()
             Log.i(TAG, "Camera hardware level LEGACY=$isLegacyCamera")
             if (prefs.webServerEnabled) startWebServer()
+            registerBatteryReceiver()
         } catch (e: Exception) {
             Log.e(TAG, "MonitorService initialization failed", e)
             android.widget.Toast.makeText(
@@ -180,6 +194,7 @@ class MonitorService : LifecycleService() {
                 eventStore,
                 isArmedProvider = { _isArmed.value },
                 latestFrameProvider = { latestFrameJpeg },
+                cameraLabelProvider = { cameraLabel() },
             ).also { it.start(fi.iki.elonen.NanoHTTPD.SOCKET_READ_TIMEOUT, false) }
             Log.i(TAG, "Web server started on port ${prefs.webServerPort}")
         } catch (e: Exception) {
@@ -215,9 +230,11 @@ class MonitorService : LifecycleService() {
         )
         _isArmed.value = true
         bindCamera()
+        sendStartAlert()
     }
 
     private fun stopMonitoring() {
+        sendStopAlert()
         _isArmed.value = false
         stopJob?.cancel()
         if (currentEvent != null) {
@@ -229,6 +246,50 @@ class MonitorService : LifecycleService() {
         cameraProvider?.unbindAll()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun sendStartAlert() {
+        if (!prefs.statusAlertsEnabled) return
+        serviceScope.launch {
+            var waitedMs = 0
+            while (latestFrameJpeg == null && waitedMs < 5000) {
+                delay(250)
+                waitedMs += 250
+            }
+            val imageFile = latestFrameJpeg?.let { bytes ->
+                runCatching {
+                    File(cacheDir, "status_snapshot.jpg").apply { writeBytes(bytes) }
+                }.getOrNull()
+            }
+            val subject = "${cameraLabel()}: monitoring started"
+            val bodyBuilder = StringBuilder("Monitoring started at ${timeFormat.format(Date())}.\n")
+            webServerBaseUrl()?.let { bodyBuilder.append("\nView live: $it/\n") }
+            val body = bodyBuilder.toString()
+            if (prefs.emailEnabled) {
+                emailAlerter.sendDetection(subject, body, imageFile)
+                    .onFailure { Log.w(TAG, "Start alert email failed: ${it.message}") }
+            }
+            if (prefs.ntfyEnabled) {
+                ntfyAlerter.sendDetection(subject, body, imageFile)
+                    .onFailure { Log.w(TAG, "Start alert ntfy failed: ${it.message}") }
+            }
+        }
+    }
+
+    private fun sendStopAlert() {
+        if (!prefs.statusAlertsEnabled) return
+        serviceScope.launch {
+            val subject = "${cameraLabel()}: monitoring stopped"
+            val body = "Monitoring stopped at ${timeFormat.format(Date())}."
+            if (prefs.emailEnabled) {
+                emailAlerter.sendDetection(subject, body, null)
+                    .onFailure { Log.w(TAG, "Stop alert email failed: ${it.message}") }
+            }
+            if (prefs.ntfyEnabled) {
+                ntfyAlerter.sendDetection(subject, body, null)
+                    .onFailure { Log.w(TAG, "Stop alert ntfy failed: ${it.message}") }
+            }
+        }
     }
 
     /** Called by an attached Activity to route the live preview into its PreviewView. */
@@ -348,6 +409,7 @@ class MonitorService : LifecycleService() {
         frame: Bitmap,
     ) {
         val event = currentEvent
+        val frameMaxScore = filtered.maxOfOrNull { it.score } ?: 0f
         if (event == null) {
             if (triggered.isEmpty()) return
             val newEvent = eventStore.createEvent(triggered.toList())
@@ -355,6 +417,7 @@ class MonitorService : LifecycleService() {
             currentEventGroups.clear()
             currentEventGroups.addAll(triggered)
             alertedGroupsThisEvent.clear()
+            bestSnapshotScore = frameMaxScore
             eventStore.saveSnapshot(newEvent, drawBoxes(frame, filtered))
             startRecording(newEvent)
             dispatchAlerts(newEvent, triggered, filtered)
@@ -363,6 +426,10 @@ class MonitorService : LifecycleService() {
             val newGroups = triggered - alertedGroupsThisEvent
             if (newGroups.isNotEmpty()) {
                 dispatchAlerts(event, newGroups, filtered)
+            }
+            if (frameMaxScore > bestSnapshotScore) {
+                bestSnapshotScore = frameMaxScore
+                eventStore.saveSnapshot(event, drawBoxes(frame, filtered))
             }
             extendRecording()
         }
@@ -444,7 +511,12 @@ class MonitorService : LifecycleService() {
         currentEvent = null
         currentEventGroups.clear()
         alertedGroupsThisEvent.clear()
+        bestSnapshotScore = 0f
     }
+
+    /** User-configured camera name for alert subjects/titles, falling back to the app name
+     *  — useful to tell cameras apart when running more than one. */
+    private fun cameraLabel(): String = prefs.cameraName.ifBlank { getString(R.string.app_name) }
 
     /**
      * Builds a link to this event's page on the built-in web server, using the
@@ -452,13 +524,56 @@ class MonitorService : LifecycleService() {
      * falling back to this device's current LAN IP (only reachable on the home WiFi).
      * Returns null if the web server is disabled, since there'd be nothing to link to.
      */
-    private fun eventLink(event: EventRecord): String? {
+    private fun eventLink(event: EventRecord): String? = webServerBaseUrl()?.let { "$it/event/${event.id}" }
+
+    /** Base URL for the built-in web server: the configured remote base URL (e.g. a
+     *  Tailscale address) if set, otherwise this device's current LAN IP. Null if the
+     *  web server is disabled or no address could be determined. */
+    private fun webServerBaseUrl(): String? {
         if (!prefs.webServerEnabled) return null
-        val base = prefs.remoteBaseUrl.ifBlank {
+        return prefs.remoteBaseUrl.ifBlank {
             val ip = com.securitycam.app.util.findLanIpAddress() ?: return null
             "http://$ip:${prefs.webServerPort}"
         }
-        return "$base/event/${event.id}"
+    }
+
+    private fun registerBatteryReceiver() {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                if (!prefs.batteryAlertsEnabled) return
+                val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+                val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1)
+                if (level < 0 || scale <= 0) return
+                val percent = level * 100 / scale
+                val charging = plugged != 0
+                if (charging || percent > prefs.batteryThresholdPercent) {
+                    lastBatteryAlertPercent = 100
+                } else if (percent < lastBatteryAlertPercent) {
+                    lastBatteryAlertPercent = percent
+                    sendBatteryAlert(percent)
+                }
+            }
+        }
+        batteryReceiver = receiver
+        registerReceiver(receiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+    }
+
+    private fun sendBatteryAlert(percent: Int) {
+        Log.w(TAG, "Battery low: $percent% and not charging")
+        serviceScope.launch {
+            val subject = "${cameraLabel()}: low battery ($percent%)"
+            val body = "The camera phone's battery is at $percent% and not charging. " +
+                "It may stop recording/alerting soon if it isn't plugged back in."
+            if (prefs.emailEnabled) {
+                emailAlerter.sendDetection(subject, body, null)
+                    .onFailure { Log.w(TAG, "Battery alert email failed: ${it.message}") }
+            }
+            if (prefs.ntfyEnabled) {
+                ntfyAlerter.sendDetection(subject, body, null)
+                    .onFailure { Log.w(TAG, "Battery alert ntfy failed: ${it.message}") }
+            }
+        }
     }
 
     private fun dispatchAlerts(event: EventRecord, groups: Set<DetectionGroup>, filtered: List<Detection>) {
@@ -478,7 +593,7 @@ class MonitorService : LifecycleService() {
                     .onFailure { Log.w(TAG, "Gemini description failed: ${it.message}") }
             }
 
-            val subject = "SecurityCam: $groupNames detected"
+            val subject = "${cameraLabel()}: $groupNames detected"
             val bodyBuilder = StringBuilder()
                 .append("Detected: $groupNames\n")
                 .append("Time: $timeStr\n")
@@ -545,7 +660,7 @@ class MonitorService : LifecycleService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         return NotificationCompat.Builder(this, CHANNEL_MONITOR)
-            .setContentTitle(getString(R.string.app_name))
+            .setContentTitle(cameraLabel())
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_cam)
             .setOngoing(true)
@@ -575,6 +690,7 @@ class MonitorService : LifecycleService() {
         }
         if (::detector.isInitialized) detector.close()
         webServer?.stop()
+        batteryReceiver?.let { runCatching { unregisterReceiver(it) } }
         super.onDestroy()
     }
 

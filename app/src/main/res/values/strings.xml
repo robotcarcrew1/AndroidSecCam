@@ -16,4 +16,6 @@
     <string name="no_clip_available">No video clip (camera limitation) — still frames below</string>
     <string name="delete_event">Delete event</string>
     <string name="delete_event_confirm">Delete this event and all its recordings/frames? This can\'t be undone.</string>
+    <string name="previous_frame">Previous frame</string>
+    <string name="next_frame">Next frame</string>
 </resources>

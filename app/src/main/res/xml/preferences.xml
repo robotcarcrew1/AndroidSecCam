@@ -2,6 +2,13 @@
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
+    <PreferenceCategory app:title="Camera">
+        <EditTextPreference
+            app:key="camera_name"
+            app:title="Camera name"
+            app:summary="Shown in alert subjects and the web page — useful if you run more than one camera" />
+    </PreferenceCategory>
+
     <PreferenceCategory app:title="Detection">
         <SwitchPreferenceCompat app:key="detect_human" app:title="Detect humans" app:defaultValue="true" />
         <SeekBarPreference app:key="conf_human" app:title="Human confidence %" app:defaultValue="60" app:min="10" android:max="95" app:showSeekBarValue="true" />
@@ -68,6 +75,70 @@
     <PreferenceCategory app:title="General">
         <SwitchPreferenceCompat app:key="start_on_boot" app:title="Start monitoring on boot" app:defaultValue="false" />
         <Preference app:key="battery_optimization" app:title="Ignore battery optimization" app:summary="Recommended for reliable background operation" />
+    </PreferenceCategory>
+
+    <PreferenceScreen
+        app:key="schedule_screen"
+        app:title="Monitoring schedule"
+        app:summary="Automatically start/stop monitoring on a per-day time schedule">
+
+        <SwitchPreferenceCompat app:key="schedule_enabled" app:title="Enable schedule" app:defaultValue="false" />
+
+        <PreferenceCategory app:title="Monday">
+            <SwitchPreferenceCompat app:key="schedule_mon_enabled" app:title="Active on Monday" app:defaultValue="false" />
+            <Preference app:key="schedule_mon_start" app:title="Start time" />
+            <Preference app:key="schedule_mon_end" app:title="End time" />
+        </PreferenceCategory>
+        <PreferenceCategory app:title="Tuesday">
+            <SwitchPreferenceCompat app:key="schedule_tue_enabled" app:title="Active on Tuesday" app:defaultValue="false" />
+            <Preference app:key="schedule_tue_start" app:title="Start time" />
+            <Preference app:key="schedule_tue_end" app:title="End time" />
+        </PreferenceCategory>
+        <PreferenceCategory app:title="Wednesday">
+            <SwitchPreferenceCompat app:key="schedule_wed_enabled" app:title="Active on Wednesday" app:defaultValue="false" />
+            <Preference app:key="schedule_wed_start" app:title="Start time" />
+            <Preference app:key="schedule_wed_end" app:title="End time" />
+        </PreferenceCategory>
+        <PreferenceCategory app:title="Thursday">
+            <SwitchPreferenceCompat app:key="schedule_thu_enabled" app:title="Active on Thursday" app:defaultValue="false" />
+            <Preference app:key="schedule_thu_start" app:title="Start time" />
+            <Preference app:key="schedule_thu_end" app:title="End time" />
+        </PreferenceCategory>
+        <PreferenceCategory app:title="Friday">
+            <SwitchPreferenceCompat app:key="schedule_fri_enabled" app:title="Active on Friday" app:defaultValue="false" />
+            <Preference app:key="schedule_fri_start" app:title="Start time" />
+            <Preference app:key="schedule_fri_end" app:title="End time" />
+        </PreferenceCategory>
+        <PreferenceCategory app:title="Saturday">
+            <SwitchPreferenceCompat app:key="schedule_sat_enabled" app:title="Active on Saturday" app:defaultValue="false" />
+            <Preference app:key="schedule_sat_start" app:title="Start time" />
+            <Preference app:key="schedule_sat_end" app:title="End time" />
+        </PreferenceCategory>
+        <PreferenceCategory app:title="Sunday">
+            <SwitchPreferenceCompat app:key="schedule_sun_enabled" app:title="Active on Sunday" app:defaultValue="false" />
+            <Preference app:key="schedule_sun_start" app:title="Start time" />
+            <Preference app:key="schedule_sun_end" app:title="End time" />
+        </PreferenceCategory>
+    </PreferenceScreen>
+
+    <PreferenceCategory app:title="Status &amp; battery alerts">
+        <SwitchPreferenceCompat
+            app:key="status_alerts_enabled"
+            app:title="Alert when monitoring starts/stops"
+            app:summary="Sends an email/ntfy alert with a camera snapshot when you start monitoring, and a text alert when you stop it"
+            app:defaultValue="true" />
+        <SwitchPreferenceCompat
+            app:key="battery_alerts_enabled"
+            app:title="Alert on low battery"
+            app:summary="Sends an alert if the phone is running on battery (not charging) and gets low — useful if it loses power unexpectedly"
+            app:defaultValue="true" />
+        <SeekBarPreference
+            app:key="battery_threshold_percent"
+            app:title="Low battery threshold %"
+            app:defaultValue="20"
+            app:min="5"
+            android:max="50"
+            app:showSeekBarValue="true" />
     </PreferenceCategory>
 
 </PreferenceScreen>

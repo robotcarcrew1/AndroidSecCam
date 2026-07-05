@@ -15,6 +15,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
         tools:ignore="BatteryLife" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:allowBackup="true"
@@ -43,6 +44,11 @@
             android:exported="false"
             android:label="@string/event_detail" />
 
+        <activity
+            android:name=".FrameViewerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.SecurityCam" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -65,5 +71,9 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".schedule.ScheduleReceiver"
+            android:exported="false" />
     </application>
 </manifest>

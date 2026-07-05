@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.preference.PreferenceManager
 import com.securitycam.app.detect.DetectionGroup
+import com.securitycam.app.schedule.DaySchedule
+import com.securitycam.app.schedule.Weekday
 
 /** Typed accessor over the default SharedPreferences used by the whole app. */
 class Prefs(context: Context) {
@@ -44,6 +46,15 @@ class Prefs(context: Context) {
         const val KEY_GEMINI_API_KEY = "gemini_api_key"
 
         const val KEY_START_ON_BOOT = "start_on_boot"
+
+        const val KEY_STATUS_ALERTS_ENABLED = "status_alerts_enabled"
+        const val KEY_BATTERY_ALERTS_ENABLED = "battery_alerts_enabled"
+        const val KEY_BATTERY_THRESHOLD_PERCENT = "battery_threshold_percent"
+
+        const val KEY_CAMERA_NAME = "camera_name"
+
+        const val KEY_SCHEDULE_ENABLED = "schedule_enabled"
+        const val SCHEDULE_KEY_PREFIX = "schedule_"
     }
 
     fun isGroupEnabled(group: DetectionGroup): Boolean = when (group) {
@@ -89,4 +100,22 @@ class Prefs(context: Context) {
     val geminiApiKey: String get() = sp.getString(KEY_GEMINI_API_KEY, "") ?: ""
 
     val startOnBoot: Boolean get() = sp.getBoolean(KEY_START_ON_BOOT, false)
+
+    val statusAlertsEnabled: Boolean get() = sp.getBoolean(KEY_STATUS_ALERTS_ENABLED, true)
+    val batteryAlertsEnabled: Boolean get() = sp.getBoolean(KEY_BATTERY_ALERTS_ENABLED, true)
+    val batteryThresholdPercent: Int get() = sp.getInt(KEY_BATTERY_THRESHOLD_PERCENT, 20)
+
+    /** Shown in alert subjects/titles and the web page — useful with more than one camera. */
+    val cameraName: String get() = sp.getString(KEY_CAMERA_NAME, "") ?: ""
+
+    val scheduleEnabled: Boolean get() = sp.getBoolean(KEY_SCHEDULE_ENABLED, false)
+
+    fun daySchedule(day: Weekday): DaySchedule = DaySchedule(
+        enabled = sp.getBoolean("${SCHEDULE_KEY_PREFIX}${day.keyPrefix}_enabled", false),
+        startMinutes = sp.getInt("${SCHEDULE_KEY_PREFIX}${day.keyPrefix}_start", 0),
+        endMinutes = sp.getInt("${SCHEDULE_KEY_PREFIX}${day.keyPrefix}_end", 24 * 60 - 1),
+    )
+
+    fun allDaySchedules(): Map<Int, DaySchedule> =
+        Weekday.entries.associate { it.isoIndex to daySchedule(it) }
 }

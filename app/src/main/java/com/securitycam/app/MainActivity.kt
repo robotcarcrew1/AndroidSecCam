@@ -98,6 +98,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         requestNeededPermissions()
+        com.securitycam.app.schedule.ScheduleManager.reschedule(this)
     }
 
     private fun requestNeededPermissions() {

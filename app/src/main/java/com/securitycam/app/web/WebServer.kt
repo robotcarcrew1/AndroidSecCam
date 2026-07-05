@@ -19,6 +19,7 @@ class WebServer(
     private val eventStore: EventStore,
     private val isArmedProvider: () -> Boolean,
     private val latestFrameProvider: () -> ByteArray?,
+    private val cameraLabelProvider: () -> String,
 ) : NanoHTTPD(port) {
 
     private val timeFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
@@ -141,7 +142,7 @@ class WebServer(
         </style>
         <meta http-equiv="refresh" content="15">
         </head><body>
-        <h1>SecurityCam</h1>
+        <h1>${cameraLabelProvider()}</h1>
         <p class="status ${if (armed) "armed" else "idle"}">${if (armed) "MONITORING" else "IDLE"}</p>
         <p><img src="/live.jpg" style="max-width:100%;border-radius:6px" onerror="this.style.display='none'"/></p>
         <h2>Recent events</h2>

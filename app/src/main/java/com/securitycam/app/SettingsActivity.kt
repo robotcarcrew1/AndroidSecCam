@@ -1,7 +1,9 @@
 package com.securitycam.app
 
+import android.app.TimePickerDialog
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Bundle
 import android.os.PowerManager
@@ -11,18 +13,37 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
+import androidx.preference.PreferenceScreen
 import com.securitycam.app.alert.EmailAlerter
 import com.securitycam.app.alert.GeminiDescriber
 import com.securitycam.app.alert.NtfyAlerter
+import com.securitycam.app.schedule.ScheduleManager
+import com.securitycam.app.schedule.Weekday
 import kotlinx.coroutines.launch
 
-class SettingsActivity : AppCompatActivity() {
+class SettingsActivity : AppCompatActivity(), PreferenceFragmentCompat.OnPreferenceStartScreenCallback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
         supportFragmentManager.beginTransaction()
             .replace(R.id.settings_container, SettingsFragment())
             .commit()
+    }
+
+    /** Nested `<PreferenceScreen>` entries (e.g. "Monitoring schedule") don't navigate
+     *  anywhere on their own — AndroidX requires the host to push a new fragment scoped
+     *  to that screen's key, with a back-stack entry so the system Back button returns. */
+    override fun onPreferenceStartScreen(caller: PreferenceFragmentCompat, pref: PreferenceScreen): Boolean {
+        val fragment = SettingsFragment().apply {
+            arguments = Bundle().apply {
+                putString(PreferenceFragmentCompat.ARG_PREFERENCE_ROOT, pref.key)
+            }
+        }
+        supportFragmentManager.beginTransaction()
+            .replace(R.id.settings_container, fragment)
+            .addToBackStack(pref.key)
+            .commit()
+        return true
     }
 
     class SettingsFragment : PreferenceFragmentCompat() {
@@ -45,6 +66,57 @@ class SettingsActivity : AppCompatActivity() {
                 requestIgnoreBatteryOptimizations()
                 true
             }
+
+            for (day in Weekday.entries) {
+                wireTimePreference("schedule_${day.keyPrefix}_start", defaultMinutes = 0)
+                wireTimePreference("schedule_${day.keyPrefix}_end", defaultMinutes = 24 * 60 - 1)
+            }
+        }
+
+        private val scheduleChangeListener =
+            SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+                if (key != null && key.startsWith("schedule_")) {
+                    ScheduleManager.reschedule(requireContext())
+                }
+            }
+
+        override fun onResume() {
+            super.onResume()
+            preferenceManager.sharedPreferences
+                ?.registerOnSharedPreferenceChangeListener(scheduleChangeListener)
+        }
+
+        override fun onPause() {
+            super.onPause()
+            preferenceManager.sharedPreferences
+                ?.unregisterOnSharedPreferenceChangeListener(scheduleChangeListener)
+        }
+
+        private fun wireTimePreference(key: String, defaultMinutes: Int) {
+            val pref = findPreference<Preference>(key) ?: return
+            val sp = preferenceManager.sharedPreferences ?: return
+            updateTimeSummary(pref, sp.getInt(key, defaultMinutes))
+            pref.setOnPreferenceClickListener {
+                showTimePicker(sp, key, pref, defaultMinutes)
+                true
+            }
+        }
+
+        private fun updateTimeSummary(pref: Preference, minutes: Int) {
+            pref.summary = "%02d:%02d".format(minutes / 60, minutes % 60)
+        }
+
+        private fun showTimePicker(sp: SharedPreferences, key: String, pref: Preference, defaultMinutes: Int) {
+            val current = sp.getInt(key, defaultMinutes)
+            TimePickerDialog(
+                requireContext(),
+                { _, hour, minute ->
+                    val total = hour * 60 + minute
+                    sp.edit().putInt(key, total).apply()
+                    updateTimeSummary(pref, total)
+                },
+                current / 60, current % 60, true,
+            ).show()
         }
 
         /**

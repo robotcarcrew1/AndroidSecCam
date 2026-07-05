@@ -121,6 +121,46 @@ app deletes the oldest events automatically once the cap is hit.
 Settings → General → "Start monitoring on boot" will auto-start monitoring after the
 phone reboots (e.g. after a power blip), so you don't have to walk over and tap Start again.
 
+## 9. Status and battery alerts
+
+Under Settings → "Status & battery alerts":
+
+- **Alert when monitoring starts/stops**: sends an email/ntfy alert with a live camera
+  snapshot when you tap Start, and a text-only alert when you tap Stop. Useful to confirm
+  the camera actually armed, and to know if someone (or the app itself) stopped it.
+- **Alert on low battery**: since the camera phone should normally stay plugged in 24/7,
+  this warns you if it's running on battery and drops below the configured threshold
+  (default 20%) — e.g. after a power outage or a cable coming loose. Alerts escalate as
+  the battery keeps dropping (won't repeat at the same level) and reset once it's
+  charging again.
+
+## 10. Camera name (multiple cameras)
+
+If you run more than one camera phone, set a unique **Camera name** at the top of
+Settings — it's included in every email/ntfy subject line and shown on the web page and
+foreground notification, so you can tell which camera an alert came from.
+
+## 11. Monitoring schedule
+
+Settings → **Monitoring schedule** (opens its own screen) lets you automatically start
+and stop monitoring at specific times, independently for each day of the week:
+
+1. Toggle **Enable schedule** on.
+2. For each day you want scheduled, toggle "Active on \<Day>" and set its **Start time**
+   and **End time**. Leave a day's toggle off to not schedule anything that day.
+3. An end time earlier than the start time (e.g. start 22:00, end 06:00) is treated as an
+   overnight window spanning into the next day.
+
+The schedule only forces monitoring **on** at the moment a window begins and **off** at
+the moment it ends — the manual Start/Stop button on the main screen still works as an
+override in between (e.g. if you manually stop partway through a scheduled window, it
+stays off for the rest of that window and resumes at the next scheduled start).
+
+The schedule uses Android's alarm system so it keeps working even if the app isn't open,
+surviving reboots too. On Android 12 and newer, for the most precise timing you can grant
+"Alarms & reminders" special access to the app in the phone's system Settings, though it
+will still work (just possibly a few minutes less precise) without it.
+
 ## Notes / limitations
 
 - Video clips are saved without audio (no microphone permission requested).

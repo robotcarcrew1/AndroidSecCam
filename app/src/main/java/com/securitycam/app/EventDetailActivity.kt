@@ -91,7 +91,13 @@ class EventDetailActivity : AppCompatActivity() {
                 noClipText.visibility = android.view.View.VISIBLE
                 framesRecycler.visibility = android.view.View.VISIBLE
                 framesRecycler.layoutManager = GridLayoutManager(this, 3)
-                framesRecycler.adapter = FramesAdapter(frames) { file -> openFrame(file) }
+                framesRecycler.adapter = FramesAdapter(frames) { file ->
+                    startActivity(
+                        Intent(this, FrameViewerActivity::class.java)
+                            .putExtra(FrameViewerActivity.EXTRA_EVENT_ID, event.id)
+                            .putExtra(FrameViewerActivity.EXTRA_FRAME_INDEX, frames.indexOf(file))
+                    )
+                }
             }
         }
 
@@ -107,16 +113,6 @@ class EventDetailActivity : AppCompatActivity() {
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
         }
-    }
-
-    private fun openFrame(file: File) {
-        val uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
-        val viewIntent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "image/jpeg")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        runCatching { startActivity(viewIntent) }
-            .onFailure { Toast.makeText(this, "No image viewer app found", Toast.LENGTH_SHORT).show() }
     }
 
     override fun onStart() {
