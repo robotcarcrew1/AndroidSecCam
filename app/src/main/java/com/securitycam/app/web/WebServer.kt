@@ -5,6 +5,7 @@ import com.securitycam.app.storage.EventStore
 import fi.iki.elonen.NanoHTTPD
 import java.io.File
 import java.io.FileInputStream
+import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -19,6 +20,7 @@ class WebServer(
     private val eventStore: EventStore,
     private val isArmedProvider: () -> Boolean,
     private val latestFrameProvider: () -> ByteArray?,
+    private val latestFrameSeqProvider: () -> Long,
     private val cameraLabelProvider: () -> String,
 ) : NanoHTTPD(port) {
 
@@ -33,6 +35,11 @@ class WebServer(
                     val bytes = latestFrameProvider()
                     if (bytes != null) newFixedLengthResponse(Response.Status.OK, "image/jpeg", bytes.inputStream(), bytes.size.toLong())
                     else newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "No frame yet")
+                }
+                uri == "/live" -> newFixedLengthResponse(Response.Status.OK, "text/html", renderLivePage())
+                uri == "/stream" -> {
+                    val stream = MjpegStream(latestFrameProvider, latestFrameSeqProvider)
+                    newChunkedResponse(Response.Status.OK, "multipart/x-mixed-replace; boundary=$MJPEG_BOUNDARY", stream)
                 }
                 uri.startsWith("/snapshot/") -> serveEventFile(uri.removePrefix("/snapshot/"), snapshot = true)
                 uri.startsWith("/clip/") -> serveEventFile(uri.removePrefix("/clip/"), snapshot = false)
@@ -144,10 +151,98 @@ class WebServer(
         </head><body>
         <h1>${cameraLabelProvider()}</h1>
         <p class="status ${if (armed) "armed" else "idle"}">${if (armed) "MONITORING" else "IDLE"}</p>
-        <p><img src="/live.jpg" style="max-width:100%;border-radius:6px" onerror="this.style.display='none'"/></p>
+        <p><a href="/live"><img src="/live.jpg" style="max-width:100%;border-radius:6px" onerror="this.style.display='none'"/></a></p>
+        <p><a href="/live">&#9654; Watch live</a></p>
         <h2>Recent events</h2>
         $rows
         </body></html>
         """.trimIndent()
+    }
+
+    private fun renderLivePage(): String {
+        return """
+        <html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          body{font-family:sans-serif;background:#111;color:#eee;margin:0;padding:16px}
+          h1{font-size:20px}
+          a{color:#40C4FF}
+        </style>
+        </head><body>
+        <p><a href="/">&larr; back</a></p>
+        <h1>${cameraLabelProvider()} — live</h1>
+        <p><img src="/stream" style="max-width:100%;border-radius:6px"/></p>
+        </body></html>
+        """.trimIndent()
+    }
+
+    companion object {
+        private const val MJPEG_BOUNDARY = "securitycamframe"
+    }
+
+    /**
+     * An MJPEG (multipart/x-mixed-replace) stream: blocks in [read] until a genuinely new
+     * frame is available (tracked via [seqProvider], since [frameProvider] can return the
+     * same array reference between polls), then emits it wrapped in the required
+     * multipart framing. The connection stays open as long as the client keeps reading —
+     * NanoHTTPD closes it (which surfaces here as an IOException from the client socket)
+     * when the browser navigates away or the tab is closed.
+     */
+    private class MjpegStream(
+        private val frameProvider: () -> ByteArray?,
+        private val seqProvider: () -> Long,
+    ) : InputStream() {
+        private var lastSeq = -1L
+        private var chunk: ByteArray = ByteArray(0)
+        private var pos = 0
+        private var framesWithNoData = 0
+
+        override fun read(): Int {
+            val single = ByteArray(1)
+            val n = read(single, 0, 1)
+            return if (n <= 0) -1 else single[0].toInt() and 0xFF
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            if (pos >= chunk.size) {
+                if (!fillNextChunk()) return -1
+            }
+            val n = minOf(len, chunk.size - pos)
+            System.arraycopy(chunk, pos, b, off, n)
+            pos += n
+            return n
+        }
+
+        /** Waits (polling) for a new frame and builds the next multipart chunk. Returns
+         *  false to end the stream if no frame ever arrives (e.g. monitoring isn't armed
+         *  and nothing is producing frames). */
+        private fun fillNextChunk(): Boolean {
+            while (true) {
+                val seq = seqProvider()
+                val bytes = frameProvider()
+                if (bytes != null && seq != lastSeq) {
+                    lastSeq = seq
+                    framesWithNoData = 0
+                    val header = "--$MJPEG_BOUNDARY\r\n" +
+                        "Content-Type: image/jpeg\r\n" +
+                        "Content-Length: ${bytes.size}\r\n\r\n"
+                    chunk = header.toByteArray(Charsets.US_ASCII) + bytes + "\r\n".toByteArray(Charsets.US_ASCII)
+                    pos = 0
+                    return true
+                }
+                framesWithNoData++
+                if (framesWithNoData > MAX_POLLS_WITHOUT_FRAME) return false
+                try {
+                    Thread.sleep(POLL_INTERVAL_MS)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return false
+                }
+            }
+        }
+
+        companion object {
+            private const val POLL_INTERVAL_MS = 100L
+            private const val MAX_POLLS_WITHOUT_FRAME = 300 // ~30s with no frame at all
+        }
     }
 }

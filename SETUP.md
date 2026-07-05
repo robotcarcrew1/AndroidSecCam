@@ -89,6 +89,13 @@ The page shows monitoring status, a live-ish snapshot, and a scrollable list of 
 events with thumbnails and clip downloads. There's no login — only use this on a trusted
 home network.
 
+Tap **"▶ Watch live"** (or go to `/live`) for a continuously updating live view — no app
+needed, it works in any browser. Frame rate matches the detection analysis rate (a few
+frames per second, not full video), which is enough to see what's currently happening
+after getting an alert. This only shows anything while the camera is actively bound (i.e.
+monitoring is armed, or the app is open) — if nothing is running, the page just won't
+update.
+
 ## 6. Remote access away from home WiFi (Tailscale, optional)
 
 > **Note: this feature has not actually been tested yet** — the app-side plumbing (the

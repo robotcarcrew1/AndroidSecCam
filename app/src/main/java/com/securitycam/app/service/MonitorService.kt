@@ -146,6 +146,9 @@ class MonitorService : LifecycleService() {
     private var lastBatteryAlertPercent = 100
 
     @Volatile private var latestFrameJpeg: ByteArray? = null
+    /** Bumped every time [latestFrameJpeg] changes, so the MJPEG live-stream endpoint can
+     *  tell a genuinely new frame apart from re-reading the same one. */
+    @Volatile private var latestFrameSeq: Long = 0L
 
     private val lastAnalyzedAt = AtomicLong(0L)
     private val timeFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
@@ -208,6 +211,7 @@ class MonitorService : LifecycleService() {
                 eventStore,
                 isArmedProvider = { _isArmed.value },
                 latestFrameProvider = { latestFrameJpeg },
+                latestFrameSeqProvider = { latestFrameSeq },
                 cameraLabelProvider = { cameraLabel() },
             ).also { it.start(fi.iki.elonen.NanoHTTPD.SOCKET_READ_TIMEOUT, false) }
             Log.i(TAG, "Web server started on port ${prefs.webServerPort}")
@@ -419,6 +423,7 @@ class MonitorService : LifecycleService() {
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 70, out)
                 out.toByteArray()
             }
+            latestFrameSeq++
 
             if (!_isArmed.value) return
             val present = filtered.map { it.group }.toSet()
