@@ -646,13 +646,26 @@ class MonitorService : LifecycleService() {
 
     /** Base URL for the built-in web server: the configured remote base URL (e.g. a
      *  Tailscale address) if set, otherwise this device's current LAN IP. Null if the
-     *  web server is disabled or no address could be determined. */
+     *  web server is disabled or no address could be determined.
+     *
+     *  Normalizes a bare "host:port" remote base URL by prepending "http://" and
+     *  trimming a trailing slash — SETUP.md asks for the scheme to be included, but a
+     *  value like "100.100.147.121:8080" (missing it) was live-observed in the Mi A1's
+     *  prefs, producing un-clickable "View event"/"View live" links in alerts (ntfy and
+     *  most notification apps only auto-link recognized URL schemes). */
     private fun webServerBaseUrl(): String? {
         if (!prefs.webServerEnabled) return null
-        return prefs.remoteBaseUrl.ifBlank {
+        val configured = prefs.remoteBaseUrl.trim()
+        if (configured.isBlank()) {
             val ip = com.securitycam.app.util.findLanIpAddress() ?: return null
-            "http://$ip:${prefs.webServerPort}"
+            return "http://$ip:${prefs.webServerPort}"
         }
+        val withScheme = if (configured.startsWith("http://") || configured.startsWith("https://")) {
+            configured
+        } else {
+            "http://$configured"
+        }
+        return withScheme.removeSuffix("/")
     }
 
     private fun registerBatteryReceiver() {
