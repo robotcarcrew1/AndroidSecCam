@@ -263,6 +263,9 @@ class MonitorService : LifecycleService() {
             activeRecording = null
         }
         cameraProvider?.unbindAll()
+        imageAnalysis = null
+        videoCapture = null
+        preview = null
         releaseWakeLock()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -332,69 +335,95 @@ class MonitorService : LifecycleService() {
         bindCamera()
     }
 
+    /**
+     * Binds the "core" pipeline — [ImageAnalysis] and (if supported) [VideoCapture] — once,
+     * and keeps those same use case instances bound for as long as monitoring is armed.
+     * The [Preview] use case is handled separately by [rebindPreview], which only adds or
+     * removes *that* use case.
+     *
+     * This split matters: this used to rebuild every use case (including VideoCapture) and
+     * call unbindAll() + rebindToLifecycle on every single preview attach/detach — which
+     * happens on every app foreground/background transition (see MainActivity's onStart/
+     * onStop calling attachPreviewSurfaceProvider). If that ran while a clip was actively
+     * recording (screen sleeps or app is backgrounded mid-event), it tore down the
+     * Recorder's surface out from under the in-progress Recording, producing an event with
+     * no clip.mp4 at all, and occasionally left the camera unbound afterward (black preview)
+     * when the follow-up rebind failed.
+     */
     private fun bindCamera() {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
             val provider = future.get()
             cameraProvider = provider
-            provider.unbindAll()
 
-            val resolutionSelector = ResolutionSelector.Builder()
-                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
-                .setResolutionStrategy(
-                    ResolutionStrategy(android.util.Size(640, 480), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
-                )
-                .build()
-
-            val analysis = ImageAnalysis.Builder()
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
-                .setResolutionSelector(resolutionSelector)
-                // Fixed target rotation: for a stationary security camera, CameraX's
-                // default (tied to the current display rotation at bind time) produces
-                // inconsistent results across restarts since nothing is "looking at" a
-                // display. Freezing this makes imageInfo.rotationDegrees depend only on
-                // the camera sensor's fixed hardware mounting, so it's reproducible.
-                .setTargetRotation(android.view.Surface.ROTATION_0)
-                .build()
-                .also { it.setAnalyzer(cameraExecutor, ::analyzeFrame) }
-            imageAnalysis = analysis
-
-            val useCases = mutableListOf<androidx.camera.core.UseCase>(analysis)
-            if (isLegacyCamera) {
-                // LEGACY-level camera HALs can't reliably feed a video encoder while
-                // ImageAnalysis is also streaming (confirmed: encoder times out and the
-                // clip aborts after ~1s) — skip VideoCapture and fall back to periodic
-                // still-frame bursts instead (see startBurstCapture).
-                videoCapture = null
-            } else {
-                val recorder = Recorder.Builder()
-                    .setQualitySelector(
-                        QualitySelector.from(Quality.SD, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD))
+            if (imageAnalysis == null) {
+                val resolutionSelector = ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                    .setResolutionStrategy(
+                        ResolutionStrategy(android.util.Size(640, 480), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
                     )
                     .build()
-                val video = VideoCapture.withOutput(recorder)
-                videoCapture = video
-                useCases.add(video)
+
+                val analysis = ImageAnalysis.Builder()
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                    .setResolutionSelector(resolutionSelector)
+                    // Fixed target rotation: for a stationary security camera, CameraX's
+                    // default (tied to the current display rotation at bind time) produces
+                    // inconsistent results across restarts since nothing is "looking at" a
+                    // display. Freezing this makes imageInfo.rotationDegrees depend only on
+                    // the camera sensor's fixed hardware mounting, so it's reproducible.
+                    .setTargetRotation(android.view.Surface.ROTATION_0)
+                    .build()
+                    .also { it.setAnalyzer(cameraExecutor, ::analyzeFrame) }
+                imageAnalysis = analysis
+
+                val useCases = mutableListOf<androidx.camera.core.UseCase>(analysis)
+                if (isLegacyCamera) {
+                    // LEGACY-level camera HALs can't reliably feed a video encoder while
+                    // ImageAnalysis is also streaming (confirmed: encoder times out and the
+                    // clip aborts after ~1s) — skip VideoCapture and fall back to periodic
+                    // still-frame bursts instead (see startBurstCapture).
+                    videoCapture = null
+                } else {
+                    val recorder = Recorder.Builder()
+                        .setQualitySelector(
+                            QualitySelector.from(Quality.SD, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD))
+                        )
+                        .build()
+                    val video = VideoCapture.withOutput(recorder)
+                    videoCapture = video
+                    useCases.add(video)
+                }
+
+                try {
+                    provider.bindToLifecycle(
+                        this, CameraSelector.DEFAULT_BACK_CAMERA, *useCases.toTypedArray()
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to bind camera use cases", e)
+                }
             }
 
-            val currentSurfaceProvider = previewSurfaceProvider
-            if (currentSurfaceProvider != null) {
-                val p = Preview.Builder().build().also { it.setSurfaceProvider(currentSurfaceProvider) }
-                preview = p
-                useCases.add(0, p)
-            } else {
-                preview = null
-            }
-
-            try {
-                provider.bindToLifecycle(
-                    this, CameraSelector.DEFAULT_BACK_CAMERA, *useCases.toTypedArray()
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to bind camera use cases", e)
-            }
+            rebindPreview(provider)
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    /** Adds or removes only the [Preview] use case, leaving analysis/recording untouched. */
+    private fun rebindPreview(provider: ProcessCameraProvider) {
+        preview?.let { provider.unbind(it) }
+        val currentSurfaceProvider = previewSurfaceProvider
+        if (currentSurfaceProvider != null) {
+            val p = Preview.Builder().build().also { it.setSurfaceProvider(currentSurfaceProvider) }
+            preview = p
+            try {
+                provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, p)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to bind preview", e)
+            }
+        } else {
+            preview = null
+        }
     }
 
     private fun analyzeFrame(imageProxy: androidx.camera.core.ImageProxy) {
