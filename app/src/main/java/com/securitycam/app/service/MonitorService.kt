@@ -100,6 +100,7 @@ class MonitorService : LifecycleService() {
     private lateinit var ntfyAlerter: NtfyAlerter
     private lateinit var geminiDescriber: GeminiDescriber
 
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var cameraProvider: ProcessCameraProvider? = null
     private var preview: Preview? = null
     private var imageAnalysis: ImageAnalysis? = null
@@ -265,7 +266,7 @@ class MonitorService : LifecycleService() {
             activeRecording?.stop()
             activeRecording = null
         }
-        cameraProvider?.unbindAll()
+        runCameraOp { cameraProvider?.unbindAll() }
         imageAnalysis = null
         videoCapture = null
         preview = null
@@ -340,6 +341,37 @@ class MonitorService : LifecycleService() {
     }
 
     /**
+     * Runs [op] on the main thread, spaced at least [CAMERA_OP_SPACING_MS] after the previous
+     * camera bind/unbind operation (tracked process-wide via [nextCameraOpAtMs]).
+     *
+     * Back-to-back reconfigurations of the same [ProcessCameraProvider] — e.g. one
+     * MonitorService instance's unbindAll() (stopping monitoring) racing the very next
+     * instance's bindCamera() (a quick re-arm), or a core-pipeline bind immediately followed
+     * by adding Preview — were observed live to leave the capture session half-configured:
+     * Camera2CameraImpl logs "Unable to configure camera cancelled", and afterward either the
+     * live preview sits black (despite CameraX itself reporting the Preview stream as
+     * STREAMING) or a triggered recording never receives encoder data. Camera2's async
+     * hardware reconfiguration doesn't necessarily finish by the time our next call runs on
+     * the main thread, so simply calling these sequentially isn't enough; spacing them out
+     * gives the previous reconfiguration time to actually settle.
+     */
+    private fun runCameraOp(op: () -> Unit) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val runAt = maxOf(now, nextCameraOpAtMs)
+        nextCameraOpAtMs = runAt + CAMERA_OP_SPACING_MS
+        val delay = runAt - now
+        if (delay <= 0) op() else mainHandler.postDelayed(op, delay)
+    }
+
+    /** Marks a camera op as having just happened without deferring the caller — for
+     *  onDestroy(), whose unbindAll() must run synchronously right before cameraExecutor
+     *  shuts down (see the SIGSEGV comment there). Still pushes out [nextCameraOpAtMs] so
+     *  the *next* MonitorService instance's bindCamera() is properly spaced from this one. */
+    private fun markCameraOpNow() {
+        nextCameraOpAtMs = android.os.SystemClock.elapsedRealtime() + CAMERA_OP_SPACING_MS
+    }
+
+    /**
      * Binds the "core" pipeline — [ImageAnalysis] and (if supported) [VideoCapture] — once,
      * and keeps those same use case instances bound for as long as monitoring is armed.
      * The [Preview] use case is handled separately by [rebindPreview], which only adds or
@@ -352,7 +384,8 @@ class MonitorService : LifecycleService() {
      * recording (screen sleeps or app is backgrounded mid-event), it tore down the
      * Recorder's surface out from under the in-progress Recording, producing an event with
      * no clip.mp4 at all, and occasionally left the camera unbound afterward (black preview)
-     * when the follow-up rebind failed.
+     * when the follow-up rebind failed. The actual bind/unbind calls are further wrapped in
+     * [runCameraOp] — see its doc for the remaining race this alone didn't cover.
      */
     private fun bindCamera() {
         val future = ProcessCameraProvider.getInstance(this)
@@ -360,56 +393,58 @@ class MonitorService : LifecycleService() {
             val provider = future.get()
             cameraProvider = provider
 
-            if (imageAnalysis == null) {
-                val resolutionSelector = ResolutionSelector.Builder()
-                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
-                    .setResolutionStrategy(
-                        ResolutionStrategy(android.util.Size(640, 480), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
-                    )
-                    .build()
-
-                val analysis = ImageAnalysis.Builder()
-                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
-                    .setResolutionSelector(resolutionSelector)
-                    // Fixed target rotation: for a stationary security camera, CameraX's
-                    // default (tied to the current display rotation at bind time) produces
-                    // inconsistent results across restarts since nothing is "looking at" a
-                    // display. Freezing this makes imageInfo.rotationDegrees depend only on
-                    // the camera sensor's fixed hardware mounting, so it's reproducible.
-                    .setTargetRotation(android.view.Surface.ROTATION_0)
-                    .build()
-                    .also { it.setAnalyzer(cameraExecutor, ::analyzeFrame) }
-                imageAnalysis = analysis
-
-                val useCases = mutableListOf<androidx.camera.core.UseCase>(analysis)
-                if (isLegacyCamera) {
-                    // LEGACY-level camera HALs can't reliably feed a video encoder while
-                    // ImageAnalysis is also streaming (confirmed: encoder times out and the
-                    // clip aborts after ~1s) — skip VideoCapture and fall back to periodic
-                    // still-frame bursts instead (see startBurstCapture).
-                    videoCapture = null
-                } else {
-                    val recorder = Recorder.Builder()
-                        .setQualitySelector(
-                            QualitySelector.from(Quality.SD, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD))
+            runCameraOp {
+                if (imageAnalysis == null) {
+                    val resolutionSelector = ResolutionSelector.Builder()
+                        .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                        .setResolutionStrategy(
+                            ResolutionStrategy(android.util.Size(640, 480), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
                         )
                         .build()
-                    val video = VideoCapture.withOutput(recorder)
-                    videoCapture = video
-                    useCases.add(video)
+
+                    val analysis = ImageAnalysis.Builder()
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                        .setResolutionSelector(resolutionSelector)
+                        // Fixed target rotation: for a stationary security camera, CameraX's
+                        // default (tied to the current display rotation at bind time) produces
+                        // inconsistent results across restarts since nothing is "looking at" a
+                        // display. Freezing this makes imageInfo.rotationDegrees depend only on
+                        // the camera sensor's fixed hardware mounting, so it's reproducible.
+                        .setTargetRotation(android.view.Surface.ROTATION_0)
+                        .build()
+                        .also { it.setAnalyzer(cameraExecutor, ::analyzeFrame) }
+                    imageAnalysis = analysis
+
+                    val useCases = mutableListOf<androidx.camera.core.UseCase>(analysis)
+                    if (isLegacyCamera) {
+                        // LEGACY-level camera HALs can't reliably feed a video encoder while
+                        // ImageAnalysis is also streaming (confirmed: encoder times out and the
+                        // clip aborts after ~1s) — skip VideoCapture and fall back to periodic
+                        // still-frame bursts instead (see startBurstCapture).
+                        videoCapture = null
+                    } else {
+                        val recorder = Recorder.Builder()
+                            .setQualitySelector(
+                                QualitySelector.from(Quality.SD, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD))
+                            )
+                            .build()
+                        val video = VideoCapture.withOutput(recorder)
+                        videoCapture = video
+                        useCases.add(video)
+                    }
+
+                    try {
+                        provider.bindToLifecycle(
+                            this, CameraSelector.DEFAULT_BACK_CAMERA, *useCases.toTypedArray()
+                        )
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to bind camera use cases", e)
+                    }
                 }
 
-                try {
-                    provider.bindToLifecycle(
-                        this, CameraSelector.DEFAULT_BACK_CAMERA, *useCases.toTypedArray()
-                    )
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to bind camera use cases", e)
-                }
+                rebindPreview(provider)
             }
-
-            rebindPreview(provider)
         }, ContextCompat.getMainExecutor(this))
     }
 
@@ -800,7 +835,9 @@ class MonitorService : LifecycleService() {
         // Stop new frames from being queued before touching the executor/detector below —
         // otherwise a frame already in flight on cameraExecutor can call into the native
         // TFLite detector just as it's being closed, causing a native segfault (observed
-        // during testing: SIGSEGV inside ObjectDetector_detectNative).
+        // during testing: SIGSEGV inside ObjectDetector_detectNative). This must stay
+        // synchronous (not routed through runCameraOp's delay) for that reason.
+        markCameraOpNow()
         cameraProvider?.unbindAll()
         if (::cameraExecutor.isInitialized) {
             cameraExecutor.shutdown()
@@ -826,6 +863,12 @@ class MonitorService : LifecycleService() {
         private const val ANALYSIS_INTERVAL_MS = 350L
         private const val BURST_INTERVAL_MS = 1000L
         private const val SAME_OBJECT_IOU_THRESHOLD = 0.5f
+
+        /** Minimum spacing enforced between camera bind/unbind operations by [runCameraOp],
+         *  shared across service instances (a rapid stop+start creates a new MonitorService
+         *  instance, but ProcessCameraProvider itself is a process-wide singleton). */
+        private const val CAMERA_OP_SPACING_MS = 400L
+        @Volatile private var nextCameraOpAtMs = 0L
 
         fun startIntent(context: Context) = Intent(context, MonitorService::class.java)
         fun stopIntent(context: Context) = Intent(context, MonitorService::class.java).setAction(ACTION_STOP)
