@@ -106,6 +106,9 @@ class MonitorService : LifecycleService() {
     private var videoCapture: VideoCapture<Recorder>? = null
     private var activeRecording: Recording? = null
     private var previewSurfaceProvider: Preview.SurfaceProvider? = null
+    /** Tracks which provider [preview] was last bound for, so [rebindPreview] can skip
+     *  redundant rebinds when nothing actually changed. */
+    private var boundPreviewSurfaceProvider: Preview.SurfaceProvider? = null
 
     private var currentEvent: EventRecord? = null
     private val currentEventGroups = mutableSetOf<DetectionGroup>()
@@ -266,6 +269,7 @@ class MonitorService : LifecycleService() {
         imageAnalysis = null
         videoCapture = null
         preview = null
+        boundPreviewSurfaceProvider = null
         releaseWakeLock()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -409,10 +413,22 @@ class MonitorService : LifecycleService() {
         }, ContextCompat.getMainExecutor(this))
     }
 
-    /** Adds or removes only the [Preview] use case, leaving analysis/recording untouched. */
+    /**
+     * Adds or removes only the [Preview] use case, leaving analysis/recording untouched.
+     *
+     * No-ops if [previewSurfaceProvider] already matches what's currently bound: bindCamera()
+     * runs from two independent triggers that can land back-to-back at startup — startMonitoring()
+     * and attachPreviewSurfaceProvider() (called when the Activity's service connection completes)
+     * — and re-running this unconditionally rebinds Preview twice within the same second. That
+     * double reconfiguration was observed (live, on the Tab A) to leave VideoCapture's capture
+     * session half-configured (Camera2CameraImpl logs "Unable to configure camera cancelled"
+     * right after), so the *next* recording never received any encoder data and finalized with
+     * ERROR_NO_VALID_DATA after sitting in PENDING_RECORDING for the whole clip duration.
+     */
     private fun rebindPreview(provider: ProcessCameraProvider) {
-        preview?.let { provider.unbind(it) }
         val currentSurfaceProvider = previewSurfaceProvider
+        if (currentSurfaceProvider === boundPreviewSurfaceProvider) return
+        preview?.let { provider.unbind(it) }
         if (currentSurfaceProvider != null) {
             val p = Preview.Builder().build().also { it.setSurfaceProvider(currentSurfaceProvider) }
             preview = p
@@ -424,6 +440,7 @@ class MonitorService : LifecycleService() {
         } else {
             preview = null
         }
+        boundPreviewSurfaceProvider = currentSurfaceProvider
     }
 
     private fun analyzeFrame(imageProxy: androidx.camera.core.ImageProxy) {
