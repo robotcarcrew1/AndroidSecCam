@@ -144,10 +144,12 @@ class MonitorService : LifecycleService() {
     private var wakeLock: PowerManager.WakeLock? = null
 
     private var batteryReceiver: BroadcastReceiver? = null
-    /** Tracks the lowest level we've already alerted at, so we escalate as it keeps
-     *  dropping (e.g. 20% -> 15% -> 10%) instead of spamming on every broadcast, and
-     *  reset once it's charging or back above the threshold. */
-    private var lastBatteryAlertPercent = 100
+    /** Whether we've already sent a low-battery alert for the current below-threshold
+     *  stretch — one alert per stretch is enough; resets once it's charging or back above
+     *  the threshold, so the next time it drops below alerts again. (Previously this
+     *  re-alerted on every single percentage-point drop — e.g. 20%, 19%, 18%, ... down to
+     *  3% — 18 alerts in about an hour, live-observed on the Mi A1 via ntfy history.) */
+    private var lowBatteryAlertSent = false
 
     @Volatile private var latestFrameJpeg: ByteArray? = null
     /** Bumped every time [latestFrameJpeg] changes, so the MJPEG live-stream endpoint can
@@ -664,9 +666,9 @@ class MonitorService : LifecycleService() {
                 val percent = level * 100 / scale
                 val charging = plugged != 0
                 if (charging || percent > prefs.batteryThresholdPercent) {
-                    lastBatteryAlertPercent = 100
-                } else if (percent < lastBatteryAlertPercent) {
-                    lastBatteryAlertPercent = percent
+                    lowBatteryAlertSent = false
+                } else if (!lowBatteryAlertSent) {
+                    lowBatteryAlertSent = true
                     sendBatteryAlert(percent)
                 }
             }
