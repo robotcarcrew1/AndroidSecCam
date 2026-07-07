@@ -400,15 +400,16 @@ class MonitorService : LifecycleService() {
                 }.getOrNull()
             }
             val subject = "${cameraLabel()}: monitoring started"
+            val liveLink = webServerBaseUrl()?.let { "$it/" }
             val bodyBuilder = StringBuilder("Monitoring started at ${timeFormat.format(Date())}.\n")
-            webServerBaseUrl()?.let { bodyBuilder.append("\nView live: $it/\n") }
+            liveLink?.let { bodyBuilder.append("\nView live: $it\n") }
             val body = bodyBuilder.toString()
             if (prefs.emailEnabled) {
                 emailAlerter.sendDetection(subject, body, imageFile)
                     .onFailure { Log.w(TAG, "Start alert email failed: ${it.message}") }
             }
             if (prefs.ntfyEnabled) {
-                ntfyAlerter.sendDetection(subject, body, imageFile)
+                ntfyAlerter.sendDetection(subject, body, imageFile, clickUrl = liveLink)
                     .onFailure { Log.w(TAG, "Start alert ntfy failed: ${it.message}") }
             }
         }
@@ -872,12 +873,13 @@ class MonitorService : LifecycleService() {
                 }
 
                 val subject = "${cameraLabel()}: $groupNames detected"
+                val link = eventLink(event)
                 val bodyBuilder = StringBuilder()
                     .append("Detected: $groupNames\n")
                     .append("Time: $timeStr\n")
                     .append("Objects: $labelsStr\n")
                 if (description != null) bodyBuilder.append("\nAI description: $description\n")
-                eventLink(event)?.let { bodyBuilder.append("\nView event: $it\n") }
+                link?.let { bodyBuilder.append("\nView event: $it\n") }
                 val body = bodyBuilder.toString()
 
                 if (prefs.emailEnabled) {
@@ -885,7 +887,7 @@ class MonitorService : LifecycleService() {
                         .onFailure { Log.w(TAG, "Email alert failed: ${it.message}") }
                 }
                 if (prefs.ntfyEnabled) {
-                    ntfyAlerter.sendDetection(subject, body, attachment)
+                    ntfyAlerter.sendDetection(subject, body, attachment, clickUrl = link)
                         .onFailure { Log.w(TAG, "ntfy alert failed: ${it.message}") }
                 }
 

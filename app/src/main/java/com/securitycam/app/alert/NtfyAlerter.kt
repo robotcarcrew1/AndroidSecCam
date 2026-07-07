@@ -24,10 +24,22 @@ class NtfyAlerter(context: Context) {
     suspend fun sendTest(): Result<String> =
         send(title = "SecurityCam test", message = "This is a test notification.", imageFile = null)
 
-    suspend fun sendDetection(title: String, message: String, imageFile: File?): Result<String> =
-        send(title, message, imageFile)
+    /** [clickUrl], when set, becomes the ntfy Click action: tapping the notification opens
+     *  it directly (event page / live view) instead of the user having to find the link
+     *  inside the message text. */
+    suspend fun sendDetection(
+        title: String,
+        message: String,
+        imageFile: File?,
+        clickUrl: String? = null,
+    ): Result<String> = send(title, message, imageFile, clickUrl)
 
-    private suspend fun send(title: String, message: String, imageFile: File?): Result<String> =
+    private suspend fun send(
+        title: String,
+        message: String,
+        imageFile: File?,
+        clickUrl: String? = null,
+    ): Result<String> =
         withContext(Dispatchers.IO) {
             try {
                 if (prefs.ntfyTopic.isBlank()) {
@@ -46,12 +58,14 @@ class NtfyAlerter(context: Context) {
                         .header("Title", title)
                         .header("Filename", imageFile.name)
                         .header("Message", headerSafeMessage)
+                        .apply { clickUrl?.let { header("Click", it) } }
                         .put(body)
                         .build()
                 } else {
                     Request.Builder()
                         .url(url)
                         .header("Title", title)
+                        .apply { clickUrl?.let { header("Click", it) } }
                         .post(message.toRequestBody())
                         .build()
                 }
