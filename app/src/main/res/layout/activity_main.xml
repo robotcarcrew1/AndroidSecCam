@@ -21,18 +21,20 @@
             android:layout_height="match_parent" />
     </FrameLayout>
 
-    <LinearLayout
+    <!-- Status on the left, start/stop centered, settings pinned to the far edge — the
+         gear used to sit 8dp from the toggle, easy to fat-finger while arming/disarming. -->
+    <RelativeLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:padding="12dp"
-        android:gravity="center_vertical">
+        android:padding="12dp">
 
         <TextView
             android:id="@+id/status_text"
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
+            android:layout_alignParentStart="true"
+            android:layout_centerVertical="true"
+            android:layout_toStartOf="@id/toggle_button"
             android:text="@string/status_idle"
             android:textSize="16sp" />
 
@@ -40,17 +42,21 @@
             android:id="@+id/toggle_button"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_centerInParent="true"
             android:text="@string/start_monitoring" />
 
         <ImageButton
             android:id="@+id/settings_button"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_alignParentEnd="true"
+            android:layout_centerVertical="true"
+            android:padding="8dp"
+            android:scaleType="fitCenter"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/settings"
-            android:src="@android:drawable/ic_menu_preferences" />
-    </LinearLayout>
+            android:src="@drawable/ic_settings" />
+    </RelativeLayout>
 
     <TextView
         android:layout_width="match_parent"
