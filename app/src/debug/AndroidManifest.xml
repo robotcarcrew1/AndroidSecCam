@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug-only overlay: exports MonitorService so adb can start/stop monitoring and fire
+     the synthetic TEST_EVENT during on-device debugging, e.g.
+       adb shell am start-foreground-service com.securitycam.app/.service.MonitorService
+     Release builds keep android:exported="false" from the main manifest. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application>
+        <service
+            android:name=".service.MonitorService"
+            android:exported="true"
+            tools:node="merge"
+            tools:replace="android:exported" />
+    </application>
+</manifest>

@@ -57,6 +57,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -127,6 +128,8 @@ class MonitorService : LifecycleService() {
     private var bestSnapshotScore = 0f
     private var recordingStartMs = 0L
     private var stopJob: Job? = null
+    /** See [startAnalysisWatchdog]. */
+    private var watchdogJob: Job? = null
     private var webServer: com.securitycam.app.web.WebServer? = null
 
     /** Some cheap/old camera HALs report LEGACY level and can't reliably feed a video
@@ -235,8 +238,40 @@ class MonitorService : LifecycleService() {
             stopMonitoring()
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_TEST_EVENT) {
+            triggerTestEvent()
+            return START_STICKY
+        }
         startMonitoring()
         return START_STICKY
+    }
+
+    /**
+     * Debug-build-only hook: synthesizes a detection event (snapshot + recording) exactly as
+     * a real HUMAN detection would, minus the alerts. Lets adb reproduce recording failures
+     * on demand — e.g. the boot-armed no-preview stall — without needing a person to walk in
+     * front of the camera:
+     * `adb shell am start-foreground-service -a com.securitycam.app.TEST_EVENT com.securitycam.app/.service.MonitorService`
+     */
+    private fun triggerTestEvent() {
+        val debuggable = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        if (!debuggable) return
+        if (!_isArmed.value || currentEvent != null) {
+            Log.w(TAG, "TEST_EVENT ignored (armed=${_isArmed.value}, eventActive=${currentEvent != null})")
+            return
+        }
+        Log.i(TAG, "TEST_EVENT: synthesizing detection event")
+        val newEvent = eventStore.createEvent(listOf(DetectionGroup.HUMAN))
+        currentEvent = newEvent
+        currentEventGroups.clear()
+        currentEventGroups.add(DetectionGroup.HUMAN)
+        alertedGroupsThisEvent.clear()
+        bestSnapshotScore = 0f
+        latestFrameJpeg?.let { jpeg ->
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)
+            if (bmp != null) eventStore.saveSnapshot(newEvent, bmp)
+        }
+        startRecording(newEvent)
     }
 
     override fun onBind(intent: Intent): IBinder {
@@ -254,13 +289,71 @@ class MonitorService : LifecycleService() {
         )
         acquireWakeLock()
         _isArmed.value = true
+        lastAnalyzedAt.set(System.currentTimeMillis())
         bindCamera()
+        startAnalysisWatchdog()
         sendStartAlert()
+    }
+
+    /**
+     * Self-healing for camera pipeline stalls: while armed, if no analysis frame has arrived
+     * for [WATCHDOG_STALL_MS], tears the whole camera pipeline down and rebinds it.
+     *
+     * A frozen ImageAnalysis is the common symptom of every camera-session failure this app
+     * has hit (bind/unbind races, the headless VideoCapture session bug — see [bindCamera]):
+     * the camera silently stops delivering frames while everything else keeps "running", so
+     * monitoring looks alive but detects nothing, live view serves a stale frame, and it
+     * stays that way until someone notices (observed live: 17:00–18:50, nearly two hours).
+     * For a security camera, detection dead-air is the worst failure mode — a periodic
+     * frame-freshness check is cheap insurance against variants we haven't found yet.
+     * Normal frame cadence is ~[ANALYSIS_INTERVAL_MS], so the threshold has a wide margin
+     * against false positives; it also covers "camera never delivered a first frame after
+     * arming" (e.g. binding while the camera HAL is still coming up at boot), since
+     * [startMonitoring] seeds [lastAnalyzedAt] — a failed rebind simply retries one
+     * watchdog period later.
+     */
+    private fun startAnalysisWatchdog() {
+        watchdogJob?.cancel()
+        watchdogJob = serviceScope.launch {
+            while (true) {
+                delay(WATCHDOG_POLL_MS)
+                if (!_isArmed.value) continue
+                val sinceLastFrameMs = System.currentTimeMillis() - lastAnalyzedAt.get()
+                if (sinceLastFrameMs < WATCHDOG_STALL_MS) continue
+                Log.e(TAG, "Camera pipeline stalled: no analysis frame for ${sinceLastFrameMs}ms — rebinding camera")
+                mainHandler.post { recoverFromCameraStall() }
+                // Give the rebind time to produce frames before judging it.
+                delay(WATCHDOG_STALL_MS)
+            }
+        }
+    }
+
+    /** Full camera teardown + rebind, used only by [startAnalysisWatchdog]. Any in-flight
+     *  recording is a zombie by definition here (its session is dead), so finalize the event
+     *  with whatever it has; the next detection after the rebind starts a fresh one. */
+    private fun recoverFromCameraStall() {
+        if (!_isArmed.value) return
+        if (currentEvent != null) {
+            finishRecording()
+        } else {
+            activeRecording?.stop()
+            activeRecording = null
+        }
+        stopJob?.cancel()
+        runCameraOp { cameraProvider?.unbindAll() }
+        imageAnalysis = null
+        videoCapture = null
+        preview = null
+        boundPreviewSurfaceProvider = null
+        lastAnalyzedAt.set(System.currentTimeMillis())
+        bindCamera()
     }
 
     private fun stopMonitoring() {
         sendStopAlert()
         _isArmed.value = false
+        watchdogJob?.cancel()
+        watchdogJob = null
         stopJob?.cancel()
         if (currentEvent != null) {
             finishRecording()
@@ -374,20 +467,29 @@ class MonitorService : LifecycleService() {
     }
 
     /**
-     * Binds the "core" pipeline — [ImageAnalysis] and (if supported) [VideoCapture] — once,
-     * and keeps those same use case instances bound for as long as monitoring is armed.
-     * The [Preview] use case is handled separately by [rebindPreview], which only adds or
-     * removes *that* use case.
+     * Binds the whole pipeline — [Preview], [ImageAnalysis] and (if supported) [VideoCapture]
+     * — once, and keeps those same use case instances bound for as long as monitoring is
+     * armed. After this, no use case is ever bound/unbound again until monitoring stops:
+     * preview attach/detach only swaps the Preview's surface provider (see
+     * [updatePreviewSurfaceProvider]).
      *
-     * This split matters: this used to rebuild every use case (including VideoCapture) and
-     * call unbindAll() + rebindToLifecycle on every single preview attach/detach — which
-     * happens on every app foreground/background transition (see MainActivity's onStart/
-     * onStop calling attachPreviewSurfaceProvider). If that ran while a clip was actively
-     * recording (screen sleeps or app is backgrounded mid-event), it tore down the
-     * Recorder's surface out from under the in-progress Recording, producing an event with
-     * no clip.mp4 at all, and occasionally left the camera unbound afterward (black preview)
-     * when the follow-up rebind failed. The actual bind/unbind calls are further wrapped in
-     * [runCameraOp] — see its doc for the remaining race this alone didn't cover.
+     * Preview is *always* bound, even when the UI isn't showing — sinking into an off-screen
+     * [dummySurfaceProvider] when detached. This is load-bearing, not cosmetic: whenever no
+     * UI preview was attached (app backgrounded after arming, or never opened) the
+     * use case set was just [ImageAnalysis, VideoCapture], and on the Tab A (Android 8.1)
+     * Camera2 configured that session while VideoCapture's stream was still INACTIVE — its
+     * encoder surface never became part of the capture session. The first triggered
+     * recording then activated the stream, the repeating request went out referencing a
+     * surface the session didn't have, and the whole pipeline died: the Recording sat
+     * "RECORDING" for its full duration but finalized with ERROR_NO_VALID_DATA (no clip.mp4),
+     * and ImageAnalysis stopped delivering frames (live view frozen on the event's last
+     * frame until the next full rebind — reproduced on demand via ACTION_TEST_EVENT,
+     * 2026-07-07). With Preview bound the session topology matches the app-open case
+     * (CameraX composes StreamSharing on this device) and recordings work.
+     *
+     * History: this used to rebuild every use case and unbindAll() + rebind on every preview
+     * attach/detach (every app foreground/background transition), which tore down in-progress
+     * recordings and raced Camera2's async reconfiguration — see [runCameraOp]'s doc.
      */
     private fun bindCamera() {
         val future = ProcessCameraProvider.getInstance(this)
@@ -436,6 +538,12 @@ class MonitorService : LifecycleService() {
                         useCases.add(video)
                     }
 
+                    val p = Preview.Builder().build()
+                    p.setSurfaceProvider(previewSurfaceProvider ?: dummySurfaceProvider)
+                    boundPreviewSurfaceProvider = previewSurfaceProvider
+                    preview = p
+                    useCases.add(p)
+
                     try {
                         provider.bindToLifecycle(
                             this, CameraSelector.DEFAULT_BACK_CAMERA, *useCases.toTypedArray()
@@ -443,41 +551,48 @@ class MonitorService : LifecycleService() {
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to bind camera use cases", e)
                     }
+                } else {
+                    updatePreviewSurfaceProviderLocked()
                 }
-
-                rebindPreview(provider)
             }
         }, ContextCompat.getMainExecutor(this))
     }
 
     /**
-     * Adds or removes only the [Preview] use case, leaving analysis/recording untouched.
-     *
-     * No-ops if [previewSurfaceProvider] already matches what's currently bound: bindCamera()
-     * runs from two independent triggers that can land back-to-back at startup — startMonitoring()
-     * and attachPreviewSurfaceProvider() (called when the Activity's service connection completes)
-     * — and re-running this unconditionally rebinds Preview twice within the same second. That
-     * double reconfiguration was observed (live, on the Tab A) to leave VideoCapture's capture
-     * session half-configured (Camera2CameraImpl logs "Unable to configure camera cancelled"
-     * right after), so the *next* recording never received any encoder data and finalized with
-     * ERROR_NO_VALID_DATA after sitting in PENDING_RECORDING for the whole clip duration.
+     * Points the always-bound [Preview] at the UI's surface provider, or at
+     * [dummySurfaceProvider] when the UI is detached. Called inside a [runCameraOp] slot:
+     * a provider swap still makes Camera2 tear down and reopen the capture session for the
+     * new surface, so it needs the same spacing from other camera ops as a bind would.
+     * No-ops if the provider hasn't actually changed (startMonitoring() and
+     * attachPreviewSurfaceProvider() can land back-to-back at startup).
      */
-    private fun rebindPreview(provider: ProcessCameraProvider) {
-        val currentSurfaceProvider = previewSurfaceProvider
-        if (currentSurfaceProvider === boundPreviewSurfaceProvider) return
-        preview?.let { provider.unbind(it) }
-        if (currentSurfaceProvider != null) {
-            val p = Preview.Builder().build().also { it.setSurfaceProvider(currentSurfaceProvider) }
-            preview = p
-            try {
-                provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, p)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to bind preview", e)
-            }
-        } else {
-            preview = null
+    private fun updatePreviewSurfaceProviderLocked() {
+        val current = previewSurfaceProvider
+        if (current === boundPreviewSurfaceProvider) return
+        val p = preview ?: return
+        p.setSurfaceProvider(current ?: dummySurfaceProvider)
+        boundPreviewSurfaceProvider = current
+    }
+
+    /**
+     * Off-screen sink for [preview] while no UI is showing: an ImageReader that immediately
+     * discards every frame. Keeps the Preview use case (and with it the full session
+     * topology, incl. StreamSharing) alive when the app is backgrounded or was never opened
+     * — see [bindCamera] for why headless binding without Preview breaks recording on the
+     * Tab A. The reader is closed via provideSurface's completion callback, i.e. only once
+     * the camera is guaranteed to no longer be writing into it.
+     */
+    private val dummySurfaceProvider = Preview.SurfaceProvider { request ->
+        val reader = android.media.ImageReader.newInstance(
+            request.resolution.width,
+            request.resolution.height,
+            android.graphics.ImageFormat.PRIVATE,
+            2,
+        )
+        reader.setOnImageAvailableListener({ r -> r.acquireLatestImage()?.close() }, mainHandler)
+        request.provideSurface(reader.surface, ContextCompat.getMainExecutor(this)) {
+            reader.close()
         }
-        boundPreviewSurfaceProvider = currentSurfaceProvider
     }
 
     private fun analyzeFrame(imageProxy: androidx.camera.core.ImageProxy) {
@@ -841,6 +956,7 @@ class MonitorService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        watchdogJob?.cancel()
         stopJob?.cancel()
         if (currentEvent != null) {
             finishRecording()
@@ -866,16 +982,20 @@ class MonitorService : LifecycleService() {
         webServer?.stop()
         batteryReceiver?.let { runCatching { unregisterReceiver(it) } }
         releaseWakeLock()
+        serviceScope.cancel()
         super.onDestroy()
     }
 
     companion object {
         private const val TAG = "MonitorService"
         const val ACTION_STOP = "com.securitycam.app.STOP"
+        const val ACTION_TEST_EVENT = "com.securitycam.app.TEST_EVENT"
         const val CHANNEL_MONITOR = "monitor"
         const val CHANNEL_EVENTS = "events"
         const val NOTIF_ID_MONITOR = 1
         private const val ANALYSIS_INTERVAL_MS = 350L
+        private const val WATCHDOG_POLL_MS = 3_000L
+        private const val WATCHDOG_STALL_MS = 12_000L
         private const val BURST_INTERVAL_MS = 1000L
         private const val SAME_OBJECT_IOU_THRESHOLD = 0.5f
 
