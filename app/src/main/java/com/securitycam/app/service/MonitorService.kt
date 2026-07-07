@@ -876,7 +876,16 @@ class MonitorService : LifecycleService() {
                 if (prefs.geminiEnabled) {
                     geminiDescriber.describe(
                         attachment,
-                        "In one short sentence, describe what a security camera detected in this image (e.g. person, vehicle, animal, activity)."
+                        "Describe what a security camera detected in this image, in 2-3 concise " +
+                            "sentences suitable for a phone notification. Mention every person, " +
+                            "vehicle, and animal visible, not just one. For any vehicle, give its " +
+                            "type (car, van, pickup, SUV, truck, motorcycle, bicycle, bus, etc.), " +
+                            "its color, and its make/model if you can identify it. If a license " +
+                            "plate is clearly legible, include the exact characters; if it's blurry, " +
+                            "too small, or only partially visible, don't guess at it or include a " +
+                            "partial reading. For any animal, give your best guess at the species " +
+                            "and what it appears to be doing. For any person, briefly note clothing " +
+                            "and what they appear to be doing. Be specific but concise."
                     ).onSuccess { description = it }
                         .onFailure { Log.w(TAG, "Gemini description failed: ${it.message}") }
                 }
