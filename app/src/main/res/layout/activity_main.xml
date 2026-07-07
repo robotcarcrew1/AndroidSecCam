@@ -10,10 +10,15 @@
         android:layout_weight="3"
         android:background="#000000">
 
-        <androidx.camera.view.PreviewView
-            android:id="@+id/preview_view"
+        <!-- Live view is fed from the service's analysis frames (DetectionFrame.bitmap),
+             not a CameraX PreviewView — the camera session must never be reconfigured by
+             UI lifecycle (see MonitorService.bindCamera). -->
+        <ImageView
+            android:id="@+id/live_view"
             android:layout_width="match_parent"
-            android:layout_height="match_parent" />
+            android:layout_height="match_parent"
+            android:scaleType="fitCenter"
+            android:contentDescription="@null" />
 
         <com.securitycam.app.ui.OverlayView
             android:id="@+id/overlay_view"

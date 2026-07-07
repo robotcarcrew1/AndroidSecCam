@@ -75,6 +75,13 @@ data class DetectionFrame(
     val detections: List<Detection>,
     val frameWidth: Int,
     val frameHeight: Int,
+    /** The analyzed frame itself (rotation already applied), for the in-app live view.
+     *  The UI renders this instead of a CameraX Preview: on the Tab A, StreamSharing
+     *  (CameraX 1.3.4) never starts rendering into a Preview surface provider that is
+     *  swapped in after binding, so an in-app PreviewView attached to the always-bound
+     *  Preview use case just stays black. Feeding the UI from analysis frames keeps the
+     *  camera topology permanently fixed — the UI never touches the camera session. */
+    val bitmap: Bitmap? = null,
 )
 
 /**
@@ -107,10 +114,6 @@ class MonitorService : LifecycleService() {
     private var imageAnalysis: ImageAnalysis? = null
     private var videoCapture: VideoCapture<Recorder>? = null
     private var activeRecording: Recording? = null
-    private var previewSurfaceProvider: Preview.SurfaceProvider? = null
-    /** Tracks which provider [preview] was last bound for, so [rebindPreview] can skip
-     *  redundant rebinds when nothing actually changed. */
-    private var boundPreviewSurfaceProvider: Preview.SurfaceProvider? = null
 
     private var currentEvent: EventRecord? = null
     private val currentEventGroups = mutableSetOf<DetectionGroup>()
@@ -344,7 +347,6 @@ class MonitorService : LifecycleService() {
         imageAnalysis = null
         videoCapture = null
         preview = null
-        boundPreviewSurfaceProvider = null
         lastAnalyzedAt.set(System.currentTimeMillis())
         bindCamera()
     }
@@ -365,7 +367,6 @@ class MonitorService : LifecycleService() {
         imageAnalysis = null
         videoCapture = null
         preview = null
-        boundPreviewSurfaceProvider = null
         releaseWakeLock()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -429,12 +430,6 @@ class MonitorService : LifecycleService() {
         }
     }
 
-    /** Called by an attached Activity to route the live preview into its PreviewView. */
-    fun attachPreviewSurfaceProvider(provider: Preview.SurfaceProvider?) {
-        previewSurfaceProvider = provider
-        bindCamera()
-    }
-
     /**
      * Runs [op] on the main thread, spaced at least [CAMERA_OP_SPACING_MS] after the previous
      * camera bind/unbind operation (tracked process-wide via [nextCameraOpAtMs]).
@@ -473,19 +468,25 @@ class MonitorService : LifecycleService() {
      * preview attach/detach only swaps the Preview's surface provider (see
      * [updatePreviewSurfaceProvider]).
      *
-     * Preview is *always* bound, even when the UI isn't showing — sinking into an off-screen
-     * [dummySurfaceProvider] when detached. This is load-bearing, not cosmetic: whenever no
-     * UI preview was attached (app backgrounded after arming, or never opened) the
-     * use case set was just [ImageAnalysis, VideoCapture], and on the Tab A (Android 8.1)
-     * Camera2 configured that session while VideoCapture's stream was still INACTIVE — its
-     * encoder surface never became part of the capture session. The first triggered
-     * recording then activated the stream, the repeating request went out referencing a
-     * surface the session didn't have, and the whole pipeline died: the Recording sat
-     * "RECORDING" for its full duration but finalized with ERROR_NO_VALID_DATA (no clip.mp4),
-     * and ImageAnalysis stopped delivering frames (live view frozen on the event's last
-     * frame until the next full rebind — reproduced on demand via ACTION_TEST_EVENT,
-     * 2026-07-07). With Preview bound the session topology matches the app-open case
-     * (CameraX composes StreamSharing on this device) and recordings work.
+     * Preview is *always* bound, permanently sinking into the off-screen
+     * [dummySurfaceProvider] — the UI never touches the camera session at all (it renders
+     * [DetectionFrame.bitmap] instead). This is load-bearing, not cosmetic, for two reasons,
+     * both hit live on the Tab A (Android 8.1, CameraX 1.3.4) on 2026-07-07:
+     *
+     * 1. Without Preview bound (the old headless state: app backgrounded after arming, or
+     *    never opened) the use case set was just [ImageAnalysis, VideoCapture], and Camera2
+     *    configured that session while VideoCapture's stream was still INACTIVE — its encoder
+     *    surface never became part of the capture session. The first triggered recording then
+     *    activated the stream, the repeating request went out referencing a surface the
+     *    session didn't have, and the whole pipeline died: the Recording sat "RECORDING" for
+     *    its full duration but finalized with ERROR_NO_VALID_DATA (no clip.mp4), and
+     *    ImageAnalysis stopped delivering frames (live view frozen on the event's last frame
+     *    until the next full rebind — reproduced on demand via ACTION_TEST_EVENT). With
+     *    Preview bound, CameraX composes StreamSharing on this device and recordings work.
+     * 2. The Preview's surface provider also can't be swapped to a real UI surface later:
+     *    StreamSharing in CameraX 1.3.4 connects the swapped-in surface ("Surface set on
+     *    Preview") but never renders a frame into it — an in-app PreviewView stayed black
+     *    while analysis/recording kept working. Hence the fixed dummy sink + bitmap-fed UI.
      *
      * History: this used to rebuild every use case and unbindAll() + rebind on every preview
      * attach/detach (every app foreground/background transition), which tore down in-progress
@@ -539,8 +540,7 @@ class MonitorService : LifecycleService() {
                     }
 
                     val p = Preview.Builder().build()
-                    p.setSurfaceProvider(previewSurfaceProvider ?: dummySurfaceProvider)
-                    boundPreviewSurfaceProvider = previewSurfaceProvider
+                    p.setSurfaceProvider(dummySurfaceProvider)
                     preview = p
                     useCases.add(p)
 
@@ -551,36 +551,17 @@ class MonitorService : LifecycleService() {
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to bind camera use cases", e)
                     }
-                } else {
-                    updatePreviewSurfaceProviderLocked()
                 }
             }
         }, ContextCompat.getMainExecutor(this))
     }
 
     /**
-     * Points the always-bound [Preview] at the UI's surface provider, or at
-     * [dummySurfaceProvider] when the UI is detached. Called inside a [runCameraOp] slot:
-     * a provider swap still makes Camera2 tear down and reopen the capture session for the
-     * new surface, so it needs the same spacing from other camera ops as a bind would.
-     * No-ops if the provider hasn't actually changed (startMonitoring() and
-     * attachPreviewSurfaceProvider() can land back-to-back at startup).
-     */
-    private fun updatePreviewSurfaceProviderLocked() {
-        val current = previewSurfaceProvider
-        if (current === boundPreviewSurfaceProvider) return
-        val p = preview ?: return
-        p.setSurfaceProvider(current ?: dummySurfaceProvider)
-        boundPreviewSurfaceProvider = current
-    }
-
-    /**
-     * Off-screen sink for [preview] while no UI is showing: an ImageReader that immediately
-     * discards every frame. Keeps the Preview use case (and with it the full session
-     * topology, incl. StreamSharing) alive when the app is backgrounded or was never opened
-     * — see [bindCamera] for why headless binding without Preview breaks recording on the
-     * Tab A. The reader is closed via provideSurface's completion callback, i.e. only once
-     * the camera is guaranteed to no longer be writing into it.
+     * Permanent off-screen sink for [preview]: an ImageReader that immediately discards
+     * every frame. Keeps the Preview use case (and with it the full session topology,
+     * incl. StreamSharing) alive at all times — see [bindCamera] for why. The reader is
+     * closed via provideSurface's completion callback, i.e. only once the camera is
+     * guaranteed to no longer be writing into it.
      */
     private val dummySurfaceProvider = Preview.SurfaceProvider { request ->
         val reader = android.media.ImageReader.newInstance(
@@ -616,7 +597,7 @@ class MonitorService : LifecycleService() {
             val filtered = raw.filter { d ->
                 prefs.isGroupEnabled(d.group) && d.score >= prefs.confidenceFor(d.group)
             }
-            _detectionFrame.value = DetectionFrame(filtered, bitmap.width, bitmap.height)
+            _detectionFrame.value = DetectionFrame(filtered, bitmap.width, bitmap.height, bitmap)
             latestFrameJpeg = java.io.ByteArrayOutputStream().use { out ->
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 70, out)
                 out.toByteArray()

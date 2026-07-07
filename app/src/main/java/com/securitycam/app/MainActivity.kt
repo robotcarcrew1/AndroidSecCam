@@ -9,11 +9,11 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -27,7 +27,7 @@ import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var previewView: PreviewView
+    private lateinit var liveView: ImageView
     private lateinit var overlayView: OverlayView
     private lateinit var statusText: TextView
     private lateinit var toggleButton: MaterialButton
@@ -41,7 +41,6 @@ class MainActivity : AppCompatActivity() {
             val svc = (service as MonitorService.LocalBinder).getService()
             monitorService = svc
             bound = true
-            svc.attachPreviewSurfaceProvider(previewView.surfaceProvider)
             observeService(svc)
         }
 
@@ -63,7 +62,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        previewView = findViewById(R.id.preview_view)
+        liveView = findViewById(R.id.live_view)
         overlayView = findViewById(R.id.overlay_view)
         statusText = findViewById(R.id.status_text)
         toggleButton = findViewById(R.id.toggle_button)
@@ -131,7 +130,11 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 launch {
+                    // The live view renders the service's analysis frames (~3 fps) rather
+                    // than a CameraX Preview — see DetectionFrame.bitmap for why the camera
+                    // session must never be touched by UI lifecycle.
                     svc.detectionFrame.collect { frame ->
+                        frame.bitmap?.let { liveView.setImageBitmap(it) }
                         overlayView.update(frame.detections, frame.frameWidth, frame.frameHeight)
                     }
                 }
@@ -152,7 +155,6 @@ class MainActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         if (bound) {
-            monitorService?.attachPreviewSurfaceProvider(null)
             unbindService(connection)
             bound = false
         }

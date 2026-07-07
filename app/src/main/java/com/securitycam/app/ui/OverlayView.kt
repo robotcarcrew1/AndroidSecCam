@@ -48,16 +48,19 @@ class OverlayView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (detections.isEmpty()) return
-        val scaleX = width.toFloat() / sourceWidth
-        val scaleY = height.toFloat() / sourceHeight
+        // Match the fitCenter mapping of the live-view ImageView underneath (uniform
+        // scale, letterboxed and centered), so boxes land exactly on the displayed image.
+        val scale = minOf(width.toFloat() / sourceWidth, height.toFloat() / sourceHeight)
+        val offsetX = (width - sourceWidth * scale) / 2f
+        val offsetY = (height - sourceHeight * scale) / 2f
         for (d in detections) {
             val color = colorFor(d.group)
             boxPaint.color = color
             textBgPaint.color = color
-            val left = d.left * scaleX
-            val top = d.top * scaleY
-            val right = d.right * scaleX
-            val bottom = d.bottom * scaleY
+            val left = offsetX + d.left * scale
+            val top = offsetY + d.top * scale
+            val right = offsetX + d.right * scale
+            val bottom = offsetY + d.bottom * scale
             canvas.drawRect(left, top, right, bottom, boxPaint)
             val label = "${d.label} ${(d.score * 100).toInt()}%"
             val textWidth = textPaint.measureText(label)
