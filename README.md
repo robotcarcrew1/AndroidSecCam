@@ -56,3 +56,7 @@ devices/camera hardware.
 - `storage/EventStore.kt` — on-disk event layout and retention (size cap + age).
 - `web/WebServer.kt` — the built-in LAN status page (NanoHTTPD).
 - `ui/` + `MainActivity.kt` / `EventDetailActivity.kt` / `SettingsActivity.kt` — app UI.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
