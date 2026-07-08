@@ -100,17 +100,21 @@ update.
 
 ## 6. Remote access away from home WiFi (Tailscale, optional)
 
-> **Note: this feature has not actually been tested yet** — the app-side plumbing (the
-> "Remote base URL" setting and the links it builds into alerts) has been verified to
-> work correctly with the LAN IP, but installing/configuring Tailscale itself and
-> confirming the camera device is reachable through it hasn't been tried. Treat the
-> steps below as a starting point, not a guarantee.
+> **Verified working** (2026-07-07/08, on a Samsung Galaxy Tab A): Tailscale
+> install/config, the camera device staying reachable through it, and the whole thing
+> surviving an unattended reboot (see step 6 below) have all been tested end-to-end —
+> not just the app-side "Remote base URL" plumbing.
 
 The local web page above only works while your other phone is on the **same home WiFi**
 as the camera. [Tailscale](https://tailscale.com) is a free VPN app that creates a
 private, encrypted network between just your own devices — no port forwarding, no public
 exposure — so you can reach the camera's web page (and the "View event" links in alerts)
-from anywhere with internet, not just at home.
+from anywhere with internet, not just at home. This also covers a camera device that has
+**no WiFi at all and runs on a SIM card's mobile data** instead — nothing in the app is
+WiFi-specific, but without a remote base URL configured, alert links fall back to the
+device's LAN IP, and on mobile data that's the carrier's NAT'ed address, unreachable from
+outside. Tailscale itself works the same over mobile data as over WiFi, so the steps
+below are identical either way.
 
 1. Install the **Tailscale** app on the camera device *and* on the phone you want to view
    it from (Play Store, or sideload the APK the same way you installed SecurityCam).
@@ -122,11 +126,18 @@ from anywhere with internet, not just at home.
    `http://<that-tailscale-ip>:8080` (using the same port as "Local web page" above).
 5. From your other phone (with Tailscale running), try browsing to that same address —
    it should load the camera's status page even when you're both off the home WiFi.
+6. **If the camera device should survive power cuts/reboots unattended**: enable
+   SecurityCam's own **Start monitoring on boot** setting, *and* make Tailscale start
+   automatically too — on the camera device, in Android's Settings → Network & internet →
+   VPN, tap the gear next to Tailscale and enable **Always-on VPN**. Without this second
+   step, monitoring will re-arm after a reboot but the device won't be reachable (and
+   alert links won't work) until someone manually reopens Tailscale.
 
 Once set up, alert emails/ntfy notifications will include a "View event" link using this
-address instead of the LAN-only IP, so it works from wherever you are. Leave the field
-blank to keep using the LAN IP only (fine if you're always going to be on the same WiFi
-when checking alerts).
+address instead of the LAN-only IP, so it works from wherever you are — and tapping the
+notification itself opens that link directly. Leave the field blank to keep using the LAN
+IP only (fine if you're always going to be on the same WiFi when checking alerts, but
+won't work at all on a WiFi-less/SIM-only device).
 
 ## 7. Optional: AI description of detections (Gemini free tier)
 
