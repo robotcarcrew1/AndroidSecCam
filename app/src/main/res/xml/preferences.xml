@@ -20,13 +20,8 @@
         <SeekBarPreference
             app:key="cooldown_seconds"
             app:title="Cooldown between recordings (s)"
-            app:summary="How often a new clip/snapshot can start for the same category. Short by design — see &quot;Minimum time between repeat alerts&quot; below to stop a lingering object (e.g. a parked car) from spamming your email/ntfy."
+            app:summary="How often a new clip/snapshot and alert can start for a genuinely new detection (a different category, or the same category in a different spot). A lingering object you've already been alerted on (e.g. a parked car) won't trigger again at all until it moves."
             app:defaultValue="60" app:min="5" android:max="600" app:showSeekBarValue="true" />
-        <SeekBarPreference
-            app:key="alert_repeat_minutes"
-            app:title="Minimum time between repeat alerts (min)"
-            app:summary="If the same category (e.g. a parked car) is still there, don't send another email/ntfy alert until this much time has passed. Recordings/snapshots still happen as normal — only the alert is throttled. 0 = alert every time."
-            app:defaultValue="15" app:min="0" android:max="180" app:showSeekBarValue="true" />
         <ListPreference
             app:key="camera_mount_rotation"
             app:title="Camera mounting rotation"

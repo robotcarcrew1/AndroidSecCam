@@ -627,15 +627,23 @@ class MonitorService : LifecycleService() {
         val frameMaxScore = filtered.maxOfOrNull { it.score } ?: 0f
         if (event == null) {
             if (triggered.isEmpty()) return
-            val newEvent = eventStore.createEvent(triggered.toList())
+            // Don't spin up a whole new event/recording for an object we've already
+            // alerted on and that never left (e.g. a parked car) — only groups that are
+            // either brand new or a different physical object (box moved) get one.
+            val newGroups = triggered.filterNot { isSameObjectAsLastAlert(it, filtered) }.toSet()
+            if (newGroups.isEmpty()) {
+                Log.i(TAG, "Skipping new event for $triggered (same object already alerted, still present)")
+                return
+            }
+            val newEvent = eventStore.createEvent(newGroups.toList())
             currentEvent = newEvent
             currentEventGroups.clear()
-            currentEventGroups.addAll(triggered)
+            currentEventGroups.addAll(newGroups)
             alertedGroupsThisEvent.clear()
             bestSnapshotScore = frameMaxScore
             eventStore.saveSnapshot(newEvent, drawBoxes(frame, filtered))
             startRecording(newEvent)
-            dispatchAlerts(newEvent, triggered, filtered)
+            dispatchAlerts(newEvent, newGroups, filtered)
         } else {
             currentEventGroups.addAll(triggered)
             val newGroups = triggered - alertedGroupsThisEvent
@@ -804,33 +812,31 @@ class MonitorService : LifecycleService() {
         }
     }
 
+    /** Is the highest-scoring current detection for [group] the same physical object
+     *  (via bounding-box overlap) as the one we last alerted on? Used to keep a
+     *  stationary object (e.g. a parked car) from re-triggering events/alerts for as
+     *  long as it doesn't move. */
+    private fun isSameObjectAsLastAlert(group: DetectionGroup, filtered: List<Detection>): Boolean {
+        val candidate = filtered.filter { it.group == group }.maxByOrNull { it.score } ?: return false
+        val memory = lastAlert[group] ?: return false
+        return candidate.boxOverlap(memory.box) >= SAME_OBJECT_IOU_THRESHOLD
+    }
+
     private fun dispatchAlerts(event: EventRecord, groups: Set<DetectionGroup>, filtered: List<Detection>) {
         alertedGroupsThisEvent.addAll(groups)
         refreshRecentEvents()
         val notification = buildNotification(getString(R.string.status_monitoring))
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIF_ID_MONITOR, notification)
 
-        // Recordings/snapshots always happen regardless (handled by the caller) — this
-        // gate only throttles the email/ntfy alert itself, independently of the
-        // recording cooldown. A group only gets suppressed if the *same physical object*
-        // (same position, via bounding-box overlap) is still the one being seen — a
+        // A group only gets suppressed if the *same physical object* (same position, via
+        // bounding-box overlap) is still the one being seen — once alerted, it stays
+        // suppressed for as long as it doesn't move, with no time-based re-alert. A
         // different object of the same category (e.g. a different car pulling in) always
-        // alerts immediately regardless of the repeat window.
+        // alerts immediately.
         val now = System.currentTimeMillis()
-        val repeatMs = prefs.alertRepeatMs
-        val dueGroups = groups.filter { g ->
-            val candidate = filtered.filter { it.group == g }.maxByOrNull { it.score }
-            val memory = lastAlert[g]
-            val sameObjectStillThere = candidate != null && memory != null &&
-                candidate.boxOverlap(memory.box) >= SAME_OBJECT_IOU_THRESHOLD
-            if (!sameObjectStillThere) {
-                true
-            } else {
-                repeatMs <= 0 || now - memory!!.timestampMs >= repeatMs
-            }
-        }.toSet()
+        val dueGroups = groups.filterNot { isSameObjectAsLastAlert(it, filtered) }.toSet()
         if (dueGroups.isEmpty()) {
-            Log.i(TAG, "Suppressing repeat alert for $groups (same object, within alert-repeat window)")
+            Log.i(TAG, "Suppressing repeat alert for $groups (same object already alerted, still present)")
             return
         }
         dueGroups.forEach { g ->
